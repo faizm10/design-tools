@@ -1,7 +1,11 @@
-# design-tools
+# Design tools
 
-A neutral Next.js design playground for trying frontend components, animation
-libraries, CLI-installed UI kits, and one-off interaction experiments.
+A small Next.js playground for experimenting with different design directions.
+Use it to try visual ideas, motion, components, and one-off interactions before
+they become part of a larger product.
+
+The home page is intentionally minimal: a white canvas with the current
+animation experiment.
 
 ## Run
 
@@ -12,10 +16,11 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Add an Experiment
+## Try a new design
 
-Create a component in `components/experiments/`, then register it in
-`components/experiments/registry.ts`.
+Start a component in `components/experiments/`, or use
+`components/playground/scratchpad.tsx` for a quick prototype. When an idea is
+ready to keep, register it in `components/experiments/registry.ts`.
 
 ```tsx
 import { MagneticButton } from "@/components/experiments/magnetic-button";
