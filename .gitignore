@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .gstack/
+.neon
+
+# env template is safe to commit
+!.env.example
+
+# gstack browser state
+.gstack/

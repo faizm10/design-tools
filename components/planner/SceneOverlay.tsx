@@ -24,6 +24,8 @@ import { usePlanner } from "@/lib/store";
 import { viewBridge } from "@/lib/bridge";
 import type { WallVisibility } from "@/lib/types";
 import { useWarnings } from "./useWarnings";
+import { TEMPLATES } from "@/lib/templates";
+import { useCloud } from "@/lib/cloud";
 
 function Pill({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <div className={`pointer-events-auto flex items-center gap-0.5 rounded-xl bg-white/95 p-1 shadow-lg ring-1 shadow-stone-900/5 ring-stone-200 backdrop-blur ${className}`}>{children}</div>;
@@ -77,7 +79,7 @@ export function SceneOverlay() {
   const selectedName = usePlanner((s) =>
     s.selection?.kind === "furniture" ? s.scene.furniture.find((f) => f.id === s.selection!.id)?.name : s.selection?.kind === "opening" ? (s.scene.openings.find((o) => o.id === s.selection!.id)?.kind === "door" ? "Door" : "Window") : undefined,
   );
-  const { setPref, rotateSelected, duplicateSelected, deleteSelected, select, resetToExample } = usePlanner.getState();
+  const { setPref, rotateSelected, duplicateSelected, deleteSelected, select, loadTemplate } = usePlanner.getState();
   const { list } = useWarnings();
   const [showIssues, setShowIssues] = useState(false);
   const wm = WALL_MODES.find((m) => m.value === wallMode)!;
@@ -205,10 +207,22 @@ export function SceneOverlay() {
               <Sofa className="size-5 text-stone-500" />
             </div>
             <h3 className="text-[14px] font-semibold text-stone-900">This room is empty</h3>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-stone-500">Drag furniture from the catalogue on the left, or start from the furnished example.</p>
-            <button type="button" onClick={resetToExample} className="mt-4 rounded-lg bg-stone-900 px-3.5 py-2 text-[12.5px] font-medium text-white hover:bg-stone-700">
-              Load example bedroom
-            </button>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-stone-500">Drag furniture from the catalogue on the left, or start from a template.</p>
+            <div className="mt-4 flex flex-col gap-2">
+              {TEMPLATES.filter((t) => t.id !== "empty").map((t, i) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    loadTemplate(t.id);
+                    useCloud.getState().detach();
+                  }}
+                  className={`rounded-lg px-3.5 py-2 text-[12.5px] font-medium ${i === 0 ? "bg-stone-900 text-white hover:bg-stone-700" : "text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"}`}
+                >
+                  Load “{t.name}”
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

@@ -9,7 +9,6 @@ import {
   PanelLeft,
   PanelRight,
   Redo2,
-  RotateCcw,
   Square,
   Upload,
   Undo2,
@@ -20,6 +19,9 @@ import { viewBridge } from "@/lib/bridge";
 import { downloadPng, exportSceneJson, readSceneFile } from "@/lib/io";
 import { toast } from "@/lib/toast";
 import { Segmented } from "./fields";
+import { TemplatesMenu } from "./TemplatesMenu";
+import { CloudControls } from "../account/CloudControls";
+import { useCloud } from "@/lib/cloud";
 
 function IconButton({
   onClick,
@@ -55,7 +57,7 @@ export function Toolbar({ onToggleLeft, onToggleRight }: { onToggleLeft: () => v
   const canRedo = usePlanner((s) => s.future.length > 0);
   const savedAt = usePlanner((s) => s.savedAt);
   const roomName = usePlanner((s) => s.scene.room.name);
-  const { setPref, undo, redo, loadScene, resetToExample } = usePlanner.getState();
+  const { setPref, undo, redo, loadScene } = usePlanner.getState();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const screenshot = async () => {
@@ -106,7 +108,7 @@ export function Toolbar({ onToggleLeft, onToggleRight }: { onToggleLeft: () => v
       </div>
 
       <div className="ml-auto flex items-center gap-1">
-        <span className="mr-2 hidden items-center gap-1 text-[11.5px] text-stone-400 xl:flex" title="Changes are saved in this browser automatically">
+        <span className="mr-2 hidden items-center gap-1 text-[11.5px] text-stone-400 2xl:flex" title="Changes are saved in this browser automatically">
           <CheckCircle2 className="size-3.5 text-emerald-500" />
           {savedAt ? "Saved locally" : "Autosave on"}
         </span>
@@ -121,22 +123,14 @@ export function Toolbar({ onToggleLeft, onToggleRight }: { onToggleLeft: () => v
           ]}
         />
         <div className="mx-1 hidden h-6 w-px bg-stone-200 sm:block" />
-        <IconButton
-          className="max-sm:hidden"
-          onClick={() => {
-            resetToExample();
-            toast("Example bedroom restored", { action: { label: "Undo", run: () => usePlanner.getState().undo() } });
-          }}
-          label="Reset to example room"
-        >
-          <RotateCcw className="size-4" />
-        </IconButton>
+        <TemplatesMenu />
         <IconButton className="max-sm:hidden" onClick={() => fileRef.current?.click()} label="Import plan (JSON)">
           <Upload className="size-4" />
         </IconButton>
         <IconButton className="max-sm:hidden" onClick={() => exportSceneJson(usePlanner.getState().scene)} label="Export plan (JSON)">
           <Download className="size-4" />
         </IconButton>
+        <CloudControls />
         <button
           type="button"
           onClick={screenshot}
@@ -160,6 +154,7 @@ export function Toolbar({ onToggleLeft, onToggleRight }: { onToggleLeft: () => v
             try {
               const scene = await readSceneFile(file);
               loadScene(scene);
+              useCloud.getState().detach();
               toast(`Imported “${scene.room.name}”`, { action: { label: "Undo", run: () => usePlanner.getState().undo() } });
             } catch (err) {
               toast(err instanceof Error ? err.message : "Import failed", { tone: "error" });
