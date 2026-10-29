@@ -1,6 +1,6 @@
 import type { FurnitureType } from "./types";
 
-export type CatalogCategory = "Beds" | "Storage" | "Desks & seating" | "Textiles" | "Lighting" | "Decor";
+export type CatalogCategory = "Beds" | "Storage" | "Desks & seating" | "Media" | "Textiles" | "Lighting" | "Decor";
 
 export interface CatalogEntry {
   id: string;
@@ -33,6 +33,9 @@ export const CATALOG: CatalogEntry[] = [
   { id: "desk-small", type: "desk", name: "Compact desk", category: "Desks & seating", width: 90, depth: 50, height: 74, color: "#f2efe9", colors: WOODS, keywords: ["table", "small", "laptop"] },
   { id: "chair", type: "chair", name: "Desk chair", category: "Desks & seating", width: 46, depth: 50, height: 82, color: "#b98d5f", colors: [...WOODS, ...FABRICS.slice(2, 5)], keywords: ["seat", "dining", "chair"] },
   { id: "armchair", type: "armchair", name: "Armchair", category: "Desks & seating", width: 78, depth: 82, height: 88, color: "#9aa3a0", colors: FABRICS, keywords: ["lounge", "sofa", "reading", "seat"] },
+  { id: "tv-55", type: "tv", name: "TV, 55″", category: "Media", width: 123, depth: 24, height: 76, color: "#1d1f22", colors: ["#1d1f22", "#3a3d42", "#c9cbce"], keywords: ["television", "screen", "monitor", "tv"] },
+  { id: "tv-65", type: "tv", name: "TV, 65″", category: "Media", width: 145, depth: 28, height: 89, color: "#1d1f22", colors: ["#1d1f22", "#3a3d42", "#c9cbce"], keywords: ["television", "screen", "large", "tv"] },
+  { id: "tv-stand", type: "tv-stand", name: "TV stand", category: "Media", width: 160, depth: 40, height: 50, color: "#b98d5f", colors: WOODS, keywords: ["media", "console", "unit", "bench", "tv"] },
   { id: "rug-rect", type: "rug", name: "Rug, rectangular", category: "Textiles", width: 200, depth: 140, height: 1, color: "#c9bfae", colors: ["#c9bfae", "#e8e2d6", "#8a8f86", "#4b5563", "#b9826a", "#2f3d4c"], keywords: ["carpet", "mat"] },
   { id: "rug-round", type: "rug-round", name: "Rug, round", category: "Textiles", width: 140, depth: 140, height: 1, color: "#8a8f86", colors: ["#c9bfae", "#e8e2d6", "#8a8f86", "#4b5563", "#b9826a", "#2f3d4c"], keywords: ["carpet", "circle", "mat"] },
   { id: "floor-lamp", type: "floor-lamp", name: "Floor lamp", category: "Lighting", width: 38, depth: 38, height: 155, color: "#f1ece2", colors: ["#f1ece2", "#e9d7b7", "#2b2b2b", "#9aa3a0"], keywords: ["light", "standing", "uplight"] },
@@ -40,7 +43,7 @@ export const CATALOG: CatalogEntry[] = [
   { id: "plant", type: "plant", name: "Potted plant", category: "Decor", width: 45, depth: 45, height: 110, color: "#e9e4da", colors: ["#e9e4da", "#b9826a", "#2b2b2b", "#5d6b73"], keywords: ["green", "pot", "ficus"] },
 ];
 
-export const CATEGORIES: CatalogCategory[] = ["Beds", "Storage", "Desks & seating", "Textiles", "Lighting", "Decor"];
+export const CATEGORIES: CatalogCategory[] = ["Beds", "Storage", "Desks & seating", "Media", "Textiles", "Lighting", "Decor"];
 
 export function catalogEntry(id: string): CatalogEntry | undefined {
   return CATALOG.find((c) => c.id === id);
@@ -50,8 +53,8 @@ export function catalogEntry(id: string): CatalogEntry | undefined {
 export const isFloorCovering = (t: FurnitureType) => t === "rug" || t === "rug-round";
 
 /** Items that rest on top of another item's surface when placed over it. */
-export const isSurfaceItem = (t: FurnitureType) => t === "table-lamp";
+export const isSurfaceItem = (t: FurnitureType) => t === "table-lamp" || t === "tv";
 
 /** Items with a usable top that a surface item may stand on. */
 export const hasTopSurface = (t: FurnitureType) =>
-  t === "nightstand" || t === "desk" || t === "dresser" || t === "bookcase";
+  t === "nightstand" || t === "desk" || t === "dresser" || t === "bookcase" || t === "tv-stand";

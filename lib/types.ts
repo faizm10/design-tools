@@ -24,7 +24,9 @@ export type FurnitureType =
   | "rug-round"
   | "floor-lamp"
   | "table-lamp"
-  | "plant";
+  | "plant"
+  | "tv"
+  | "tv-stand";
 
 /** A recess that extends the room outward through one wall, e.g. a desk nook or bay. */
 export interface Alcove {

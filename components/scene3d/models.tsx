@@ -408,6 +408,59 @@ function Plant({ w, d, h, color }: ModelProps) {
   );
 }
 
+function Tv({ w, d, h, color }: ModelProps) {
+  const panelT = 0.035;
+  const baseH = 0.02;
+  const neckH = Math.min(0.08, h * 0.1);
+  const screenH = h - baseH - neckH;
+  const z = -d / 2 + panelT / 2 + 0.01;
+  return (
+    <group>
+      {/* Pedestal base and neck */}
+      <Box size={[w * 0.32, baseH, d * 0.85]} position={[0, baseH / 2, 0]} color={tone(color, 0.05)} rough={0.35} metal={0.5} />
+      <Box size={[0.06, neckH, 0.03]} position={[0, baseH + neckH / 2, z]} color={tone(color, 0.05)} rough={0.35} metal={0.5} />
+      <Box size={[w, screenH, panelT]} position={[0, baseH + neckH + screenH / 2, z]} color={color} rough={0.4} metal={0.3} />
+      {/* Screen glass on the front face */}
+      <mesh position={[0, baseH + neckH + screenH / 2, z + panelT / 2 + 0.001]}>
+        <planeGeometry args={[w - 0.02, screenH - 0.02]} />
+        <meshStandardMaterial color="#0d1117" emissive="#1c2a3d" emissiveIntensity={0.35} roughness={0.08} metalness={0.2} />
+      </mesh>
+    </group>
+  );
+}
+
+function TvStand({ w, d, h, color }: ModelProps) {
+  const legH = Math.min(0.1, h * 0.2);
+  const bodyH = h - legH;
+  const third = w / 3;
+  const t = 0.018;
+  const front = tone(color, 0.03);
+  return (
+    <group>
+      <Legs w={w - 0.04} d={d - 0.04} h={legH} size={0.03} color={tone(color, -0.3)} round />
+      {/* Carcass: top, bottom, back, sides, dividers */}
+      <Box size={[w, t, d]} position={[0, h - t / 2, 0]} color={color} rough={0.6} />
+      <Box size={[w, t, d]} position={[0, legH + t / 2, 0]} color={color} rough={0.6} />
+      <Box size={[w, bodyH, 0.01]} position={[0, legH + bodyH / 2, -d / 2 + 0.005]} color={tone(color, -0.08)} />
+      {[-1, 1].map((s) => (
+        <Box key={s} size={[t, bodyH, d]} position={[s * (w / 2 - t / 2), legH + bodyH / 2, 0]} color={color} rough={0.6} />
+      ))}
+      {[-1, 1].map((s) => (
+        <Box key={`v${s}`} size={[t, bodyH - 2 * t, d - 0.01]} position={[s * (third / 2), legH + bodyH / 2, 0.005]} color={color} rough={0.6} />
+      ))}
+      {/* Doors on the outer bays, open shelf in the middle */}
+      {[-1, 1].map((s) => (
+        <group key={`d${s}`}>
+          <Box size={[third - 0.01, bodyH - 0.01, 0.016]} position={[s * third, legH + bodyH / 2, d / 2 - 0.008]} color={front} rough={0.55} />
+          <Box size={[0.1, 0.012, 0.018]} position={[s * third, legH + bodyH * 0.78, d / 2 + 0.01]} color={METAL} rough={0.3} metal={0.8} />
+        </group>
+      ))}
+      <Box size={[third - 0.04, t, d - 0.04]} position={[0, legH + bodyH / 2, 0]} color={color} rough={0.6} />
+      <Box size={[0.3, 0.05, 0.2]} position={[0, legH + t + 0.025, 0]} color="#2b2b2b" rough={0.4} />
+    </group>
+  );
+}
+
 export function FurnitureModel({ type, ...p }: ModelProps & { type: FurnitureType }) {
   switch (type) {
     case "bed":
@@ -436,5 +489,9 @@ export function FurnitureModel({ type, ...p }: ModelProps & { type: FurnitureTyp
       return <TableLamp {...p} />;
     case "plant":
       return <Plant {...p} />;
+    case "tv":
+      return <Tv {...p} />;
+    case "tv-stand":
+      return <TvStand {...p} />;
   }
 }

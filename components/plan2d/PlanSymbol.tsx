@@ -128,6 +128,28 @@ export function PlanSymbol({ type, w, d, color, px }: Props) {
         </g>
       );
     }
+    case "tv": {
+      // Thin screen across the back of the footprint, pedestal in front.
+      const screenD = Math.min(6, d * 0.3);
+      return (
+        <g>
+          <rect x={-hw * 0.32} y={-hd + screenD} width={w * 0.32} height={d - screenD} rx={2} fill={color} fillOpacity={0.35} stroke={INK} strokeWidth={sw * 0.7} />
+          <rect x={-hw} y={-hd} width={w} height={screenD} rx={1} fill={color} stroke={INK} strokeWidth={sw} />
+          <line x1={-hw + 3} x2={hw - 3} y1={-hd + screenD} y2={-hd + screenD} stroke="#7fa7d6" strokeWidth={sw * 1.4} />
+        </g>
+      );
+    }
+    case "tv-stand": {
+      const third = w / 3;
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} rx={2} {...body} />
+          <line x1={-hw + third} x2={-hw + third} y1={-hd} y2={hd} {...line} />
+          <line x1={hw - third} x2={hw - third} y1={-hd} y2={hd} {...line} />
+          <rect x={-hw + third + 3} y={-hd + 3} width={third - 6} height={d - 6} fill="#000" fillOpacity={0.12} />
+        </g>
+      );
+    }
     case "plant": {
       const r = Math.min(hw, hd);
       const leaves = 7;
