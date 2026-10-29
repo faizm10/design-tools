@@ -5,8 +5,12 @@ import { exampleScene, TEMPLATES } from "./templates";
 import { normalizeAngle, validateScene } from "./scene";
 
 export { normalizeAngle, validateScene };
-import { clampAlcove, clampOpeningOffset, findWallSpot, findFreeSpot, round1, wallLength, type Vec2 } from "./geometry";
+import { clampAlcove, clampOpeningOffset, clampSpace, footprint, polygonsOverlap, spaceRect, findWallSpot, findFreeSpot, moveWall as moveWallTo, round1, wallLength, withRoom, type Vec2 } from "./geometry";
 import type {
+  Alcove,
+  DoorSwing,
+  Space,
+  SpaceKind,
   FurnitureItem,
   Opening,
   Room,
@@ -62,6 +66,14 @@ export interface PlannerState extends Prefs {
   rotateSelected: (deg: number) => void;
   addOpening: (kind: Opening["kind"], wall?: WallSide) => void;
   updateOpening: (id: string, patch: Partial<Opening>, coalesceKey?: string) => void;
+  /** Move a wall's inner face to `pos` (see `moveWall` in geometry). */
+  moveWall: (wall: WallSide, pos: number, coalesceKey?: string) => void;
+  addAlcove: (wall: WallSide) => void;
+  updateAlcove: (id: string, patch: Partial<Alcove>, coalesceKey?: string) => void;
+  /** Step a door (an opening, or a space's door, by id) through its four hinge/swing orientations. */
+  flipDoor: (id: string) => void;
+  addSpace: (kind: SpaceKind) => void;
+  updateSpace: (id: string, patch: Partial<Space>, coalesceKey?: string) => void;
   loadScene: (scene: Scene) => void;
   resetToExample: () => void;
   loadTemplate: (id: string) => void;
@@ -161,19 +173,76 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     set({ scene: next, past: pushPast(past, scene), future: future.slice(1), selection: keepSelection(next, selection) });
   },
 
-  updateRoom: (patch, coalesceKey) =>
+  updateRoom: (patch, coalesceKey) => get().commit((s) => withRoom(s, { ...s.room, ...patch }), coalesceKey),
+
+  moveWall: (wall, pos, coalesceKey) => get().commit((s) => moveWallTo(s, wall, pos).scene, coalesceKey),
+
+  addAlcove: (wall) => {
+    const room = get().scene.room;
+    const len = wallLength(room, wall);
+    const width = Math.min(150, len);
+    const id = nanoid(8);
+    get().updateRoom({ alcoves: [...room.alcoves, { id, wall, offset: round1((len - width) / 2), width, depth: 60, window: null }] });
+    set({ selection: { kind: "alcove", id } });
+  },
+
+  flipDoor: (id) =>
     get().commit((s) => {
-      const merged = { ...s.room, ...patch };
-      // Keep alcoves within their walls when the room shrinks.
-      const room = { ...merged, alcoves: merged.alcoves.map((a) => clampAlcove(merged, a)) };
-      // Keep openings on their walls when the room shrinks.
-      const openings = s.openings.map((o) => {
-        const width = Math.min(o.width, wallLength(room, o.wall));
-        const height = Math.min(o.height, room.height - o.sill);
-        return { ...o, width, height, offset: clampOpeningOffset(room, { ...o, width }, o.offset) };
-      });
-      return { ...s, room, openings };
-    }, coalesceKey),
+      const next = <T extends { hinge: "start" | "end"; swing?: DoorSwing }>(d: T): T => {
+        const i = DOOR_CYCLE.findIndex((c) => c.hinge === d.hinge && c.swing === (d.swing ?? "in"));
+        return { ...d, ...DOOR_CYCLE[(i + 1) % DOOR_CYCLE.length] };
+      };
+      if (s.openings.some((o) => o.id === id)) return { ...s, openings: s.openings.map((o) => (o.id === id && o.kind === "door" ? next(o) : o)) };
+      return { ...s, room: { ...s.room, spaces: s.room.spaces.map((sp) => (sp.id === id && sp.door ? { ...sp, door: next(sp.door) } : sp)) } };
+    }),
+
+  addSpace: (kind) => {
+    const { room, furniture } = get().scene;
+    const preset = SPACE_PRESETS[kind];
+    const width = Math.min(preset.width, room.width);
+    const length = Math.min(preset.length, room.length);
+    // Try each inside corner and take the one that covers the least furniture.
+    const corners = [
+      { x: room.width - width, z: 0, door: "south" as const },
+      { x: 0, z: 0, door: "south" as const },
+      { x: room.width - width, z: room.length - length, door: "north" as const },
+      { x: 0, z: room.length - length, door: "north" as const },
+    ];
+    const covered = (c: { x: number; z: number }) => {
+      const r = spaceRect({ x: c.x, z: c.z, width, length } as Space);
+      const box = [{ x: r.minX, z: r.minZ }, { x: r.maxX, z: r.minZ }, { x: r.maxX, z: r.maxZ }, { x: r.minX, z: r.maxZ }];
+      return furniture.filter((f) => polygonsOverlap(box, footprint(f))).length;
+    };
+    const at = corners.reduce((best, c) => (covered(c) < covered(best) ? c : best));
+    const count = room.spaces.filter((sp) => sp.kind === kind).length;
+    const doorW = Math.min(kind === "closet" ? 80 : 70, width - 10);
+    const space: Space = clampSpace(room, {
+      id: nanoid(8),
+      name: count ? `${preset.name} ${count + 1}` : preset.name,
+      kind,
+      x: round1(at.x),
+      z: round1(at.z),
+      width,
+      length,
+      floor: kind === "bathroom" ? "tile" : room.floor,
+      // The door goes in the wall facing the rest of the room, away from the corner.
+      door: { wall: at.door, offset: at.x === 0 ? width - doorW / 2 - 10 : doorW / 2 + 10, width: doorW, hinge: at.x === 0 ? "end" : "start", swing: preset.swing },
+    });
+    get().commit((s) => ({ ...s, room: { ...s.room, spaces: [...s.room.spaces, space] } }));
+    set({ selection: { kind: "space", id: space.id } });
+  },
+
+  updateSpace: (id, patch, coalesceKey) =>
+    get().commit(
+      (s) => ({ ...s, room: { ...s.room, spaces: s.room.spaces.map((sp) => (sp.id === id ? clampSpace(s.room, { ...sp, ...patch }) : sp)) } }),
+      coalesceKey,
+    ),
+
+  updateAlcove: (id, patch, coalesceKey) =>
+    get().commit(
+      (s) => ({ ...s, room: { ...s.room, alcoves: s.room.alcoves.map((a) => (a.id === id ? clampAlcove(s.room, { ...a, ...patch }) : a)) } }),
+      coalesceKey,
+    ),
 
   addFurniture: (catalogId, at) => {
     const c = catalogEntry(catalogId);
@@ -225,8 +294,13 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   deleteSelected: () => {
     const { selection } = get();
     if (!selection) return;
+    if (selection.kind === "wall") return; // The room always keeps its four walls.
     if (selection.kind === "furniture") {
       get().commit((s) => ({ ...s, furniture: s.furniture.filter((f) => f.id !== selection.id) }));
+    } else if (selection.kind === "space") {
+      get().commit((s) => ({ ...s, room: { ...s.room, spaces: s.room.spaces.filter((sp) => sp.id !== selection.id) } }));
+    } else if (selection.kind === "alcove") {
+      get().commit((s) => ({ ...s, room: { ...s.room, alcoves: s.room.alcoves.filter((a) => a.id !== selection.id) } }));
     } else {
       get().commit((s) => ({ ...s, openings: s.openings.filter((o) => o.id !== selection.id) }));
     }
@@ -250,7 +324,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     const height = kind === "door" ? Math.min(205, room.height - 5) : Math.min(120, room.height - 100);
     const sill = kind === "door" ? 0 : 90;
     const id = nanoid(8);
-    const opening: Opening = { id, kind, wall: w, offset: len / 2, width, height, sill, hinge: "start" };
+    const opening: Opening = { id, kind, wall: w, offset: len / 2, width, height, sill, hinge: "start", ...(kind === "door" ? { swing: "in" as const } : {}) };
     get().commit((s) => ({ ...s, openings: [...s.openings, opening] }));
     set({ selection: { kind: "opening", id } });
   },
@@ -283,11 +357,26 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
 }));
 
 function keepSelection(scene: Scene, sel: Selection): Selection {
-  if (!sel) return null;
-  const list = sel.kind === "furniture" ? scene.furniture : scene.openings;
+  if (!sel || sel.kind === "wall") return sel;
+  const list =
+    sel.kind === "furniture" ? scene.furniture : sel.kind === "alcove" ? scene.room.alcoves : sel.kind === "space" ? scene.room.spaces : scene.openings;
   return list.some((x) => x.id === sel.id) ? sel : null;
 }
 
+
+/** Clockwise round the four ways a single door can hang. */
+const DOOR_CYCLE: { hinge: "start" | "end"; swing: DoorSwing }[] = [
+  { hinge: "start", swing: "in" },
+  { hinge: "end", swing: "in" },
+  { hinge: "end", swing: "out" },
+  { hinge: "start", swing: "out" },
+];
+
+const SPACE_PRESETS: Record<SpaceKind, { name: string; width: number; length: number; swing: DoorSwing }> = {
+  bathroom: { name: "Bathroom", width: 200, length: 170, swing: "in" },
+  closet: { name: "Closet", width: 160, length: 120, swing: "out" },
+  room: { name: "Small room", width: 250, length: 220, swing: "in" },
+};
 
 function pickFreeWall(scene: Scene, kind: Opening["kind"]): WallSide {
   const walls: WallSide[] = kind === "door" ? ["south", "west", "east", "north"] : ["north", "east", "west", "south"];
