@@ -1,12 +1,13 @@
 "use client";
 
+import { nanoid } from "nanoid";
 import { AlertTriangle, Copy, DoorOpen, MousePointerClick, Plus, RotateCw, Trash2, AppWindow, ChevronRight } from "lucide-react";
 import { catalogEntry } from "@/lib/catalog";
 import { usePlanner } from "@/lib/store";
 import { FLOOR_LABELS, FLOOR_SWATCH, floorDataUrl } from "@/lib/textures";
 import { formatDims, formatLength } from "@/lib/units";
 import { wallLength } from "@/lib/geometry";
-import type { FloorMaterial, FurnitureItem, Opening, WallSide } from "@/lib/types";
+import type { Alcove, FloorMaterial, FurnitureItem, Opening, WallSide } from "@/lib/types";
 import { ColorField, FieldRow, LengthField, NumberField, Section, Segmented } from "./fields";
 import { Thumbnail } from "./Catalog";
 import { useWarnings } from "./useWarnings";
@@ -314,6 +315,8 @@ function RoomProps() {
         )}
       </Section>
 
+      <AlcovesSection />
+
       <Section title={`In this room (${furniture.length})`}>
         {furniture.length === 0 ? (
           <p className="text-[12px] text-stone-500">The room is empty. Drag a bed from the catalogue to get started.</p>
@@ -337,5 +340,83 @@ function RoomProps() {
         )}
       </Section>
     </>
+  );
+}
+
+function AlcovesSection() {
+  const unit = usePlanner((s) => s.unit);
+  const room = usePlanner((s) => s.scene.room);
+  const updateRoom = usePlanner((s) => s.updateRoom);
+  const set = (id: string, patch: Partial<Alcove>, key?: string) =>
+    updateRoom({ alcoves: room.alcoves.map((a) => (a.id === id ? { ...a, ...patch } : a)) }, key);
+  const add = () => {
+    const wall: WallSide = "south";
+    const len = wallLength(room, wall);
+    const width = Math.min(150, len);
+    updateRoom({ alcoves: [...room.alcoves, { id: nanoid(8), wall, offset: (len - width) / 2, width, depth: 60, window: null }] });
+  };
+
+  return (
+    <Section
+      title="Alcoves"
+      action={
+        <button type="button" onClick={add} className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50">
+          <Plus className="size-3" /> Alcove
+        </button>
+      }
+    >
+      {room.alcoves.length === 0 ? (
+        <p className="text-[12px] text-stone-500">Add a recess such as a desk nook or bay that extends the room through a wall.</p>
+      ) : (
+        room.alcoves.map((a, i) => {
+          const along = a.wall === "north" || a.wall === "south";
+          return (
+            <div key={a.id} className="space-y-2.5 rounded-lg p-3 ring-1 ring-stone-200/80">
+              <div className="flex items-center justify-between">
+                <span className="text-[12.5px] font-medium text-stone-700">Alcove {room.alcoves.length > 1 ? i + 1 : ""}</span>
+                <button
+                  type="button"
+                  onClick={() => updateRoom({ alcoves: room.alcoves.filter((x) => x.id !== a.id) })}
+                  aria-label="Remove alcove"
+                  className="rounded p-1 text-stone-400 hover:bg-red-50 hover:text-red-600"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+              <FieldRow label="Wall">
+                <Segmented size="sm" ariaLabel="Alcove wall" value={a.wall} onChange={(wall) => set(a.id, { wall })} options={WALL_OPTIONS} />
+              </FieldRow>
+              <FieldRow label={along ? "From west corner" : "From north corner"}>
+                <LengthField label="Alcove offset" unit={unit} value={a.offset} min={0} max={wallLength(room, a.wall)} onCommit={(v) => set(a.id, { offset: v }, `al-off-${a.id}`)} />
+              </FieldRow>
+              <FieldRow label="Width">
+                <LengthField label="Alcove width" unit={unit} value={a.width} min={30} max={wallLength(room, a.wall)} onCommit={(v) => set(a.id, { width: v }, `al-w-${a.id}`)} />
+              </FieldRow>
+              <FieldRow label="Depth">
+                <LengthField label="Alcove depth" unit={unit} value={a.depth} min={10} max={400} onCommit={(v) => set(a.id, { depth: v }, `al-d-${a.id}`)} />
+              </FieldRow>
+              <FieldRow label="Back window">
+                {a.window ? (
+                  <LengthField label="Alcove window width" unit={unit} value={a.window.width} min={20} max={a.width} onCommit={(v) => set(a.id, { window: { ...a.window!, width: v } }, `al-win-${a.id}`)} />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => set(a.id, { window: { width: Math.min(80, a.width), height: 120, sill: 90 } })}
+                    className="flex h-8 items-center gap-1 rounded-md px-2 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
+                  >
+                    <Plus className="size-3" /> Add window
+                  </button>
+                )}
+              </FieldRow>
+              {a.window && (
+                <button type="button" onClick={() => set(a.id, { window: null })} className="text-[12px] font-medium text-stone-500 underline-offset-2 hover:text-stone-800 hover:underline">
+                  Remove window
+                </button>
+              )}
+            </div>
+          );
+        })
+      )}
+    </Section>
   );
 }

@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { floorCanvas, FLOOR_TILE_CM } from "@/lib/textures";
-import { wallLength } from "@/lib/geometry";
-import type { Opening, Room, WallSide, WallVisibility } from "@/lib/types";
+import { alcoveRect, wallLength, type Rect } from "@/lib/geometry";
+import type { Alcove, Opening, Room, WallSide, WallVisibility } from "@/lib/types";
 import { tone } from "./models";
 
 const T = 0.12; // wall thickness, metres
@@ -33,11 +33,99 @@ export function Floor({ room, onClick }: { room: Room; onClick: (e: ThreeEvent<M
         <planeGeometry args={[W, L]} />
         <meshStandardMaterial map={texture} roughness={room.floor === "tile" || room.floor === "concrete" ? 0.45 : 0.75} />
       </mesh>
+      {room.alcoves.map((a) => (
+        <AlcoveFloor key={a.id} room={room} rect={alcoveRect(room, a)} texture={texture} tile={tile} onClick={onClick} />
+      ))}
       {/* Ground outside the room so walls don't float. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
         <planeGeometry args={[W + 40, L + 40]} />
         <meshStandardMaterial color="#e4e0d9" roughness={1} />
       </mesh>
+    </group>
+  );
+}
+
+/** Alcove floor with its own copy of the texture, offset so planks line up with the main floor. */
+function AlcoveFloor({ room, rect, texture, tile, onClick }: { room: Room; rect: Rect; texture: THREE.Texture; tile: number; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
+  const w = (rect.maxX - rect.minX) / 100;
+  const d = (rect.maxZ - rect.minZ) / 100;
+  const { minX, maxZ } = rect;
+  const map = useMemo(() => {
+    const m = texture.clone();
+    // Main floor UVs run from the west edge (u) and the south edge (v).
+    m.repeat.set(w / tile, d / tile);
+    m.offset.set(minX / 100 / tile, (room.length - maxZ) / 100 / tile);
+    m.needsUpdate = true;
+    return m;
+  }, [texture, w, d, tile, minX, maxZ, room.length]);
+  useEffect(() => () => map.dispose(), [map]);
+  const [x, , z] = planToWorld(room, rect, 0, 0);
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[x, 0, z]} receiveShadow onClick={onClick}>
+      <planeGeometry args={[w, d]} />
+      <meshStandardMaterial map={map} roughness={room.floor === "tile" || room.floor === "concrete" ? 0.45 : 0.75} />
+    </mesh>
+  );
+}
+
+/** World-space centre of a plan rectangle at a given vertical span (cm). */
+function planToWorld(room: Room, r: Rect, y0: number, y1: number): [number, number, number] {
+  return [((r.minX + r.maxX) / 2 - room.width / 2) / 100, (y0 + y1) / 200, ((r.minZ + r.maxZ) / 2 - room.length / 2) / 100];
+}
+
+function WallBox({ room, r, y0, y1, color, shadow }: { room: Room; r: Rect; y0: number; y1: number; color: string; shadow: boolean }) {
+  return (
+    <mesh position={planToWorld(room, r, y0, y1)} castShadow={shadow} receiveShadow>
+      <boxGeometry args={[(r.maxX - r.minX) / 100, (y1 - y0) / 100, (r.maxZ - r.minZ) / 100]} />
+      <meshStandardMaterial color={color} roughness={0.92} />
+    </mesh>
+  );
+}
+
+const ROT_Y: Record<WallSide, number> = { north: 0, south: Math.PI, west: Math.PI / 2, east: -Math.PI / 2 };
+
+/** Side and back walls of an alcove, with a hole for its window. */
+function AlcoveWalls({ room, a, hidden, color, cutColor }: { room: Room; a: Alcove; hidden: boolean; color: string; cutColor: string }) {
+  const r = alcoveRect(room, a);
+  const t = T * 100;
+  const maxY = hidden ? CUT * 100 : room.height;
+  const c = hidden ? cutColor : color;
+  const horizontal = a.wall === "north" || a.wall === "south";
+  const outward = a.wall === "south" || a.wall === "east";
+  // Side walls run the alcove's depth; the back wall spans its width plus both side walls.
+  const sides: Rect[] = horizontal
+    ? [
+        { minX: r.minX - t, maxX: r.minX, minZ: outward ? r.minZ : r.minZ - t, maxZ: outward ? r.maxZ + t : r.maxZ },
+        { minX: r.maxX, maxX: r.maxX + t, minZ: outward ? r.minZ : r.minZ - t, maxZ: outward ? r.maxZ + t : r.maxZ },
+      ]
+    : [
+        { minX: outward ? r.minX : r.minX - t, maxX: outward ? r.maxX + t : r.maxX, minZ: r.minZ - t, maxZ: r.minZ },
+        { minX: outward ? r.minX : r.minX - t, maxX: outward ? r.maxX + t : r.maxX, minZ: r.maxZ, maxZ: r.maxZ + t },
+      ];
+  const win = a.window ? [{ offset: a.width / 2, width: a.window.width, sill: a.window.sill, height: a.window.height } as Opening] : [];
+  const back = wallPieces(a.width, 0, room.height, win, maxY).map((p): Rect & { y0: number; y1: number } => {
+    const strip = horizontal
+      ? { minX: r.minX + p.u0, maxX: r.minX + p.u1, minZ: outward ? r.maxZ : r.minZ - t, maxZ: outward ? r.maxZ + t : r.minZ }
+      : { minX: outward ? r.maxX : r.minX - t, maxX: outward ? r.maxX + t : r.minX, minZ: r.minZ + p.u0, maxZ: r.minZ + p.u1 };
+    return { ...strip, y0: p.y0, y1: p.y1 };
+  });
+  const backCentre: Rect = horizontal
+    ? { minX: r.minX, maxX: r.maxX, minZ: outward ? r.maxZ : r.minZ - t, maxZ: outward ? r.maxZ + t : r.minZ }
+    : { minX: outward ? r.maxX : r.minX - t, maxX: outward ? r.maxX + t : r.minX, minZ: r.minZ, maxZ: r.maxZ };
+  const [wx, , wz] = planToWorld(room, backCentre, 0, 0);
+  return (
+    <group>
+      {sides.map((sr, i) => (
+        <WallBox key={`s${i}`} room={room} r={sr} y0={0} y1={maxY} color={c} shadow={!hidden} />
+      ))}
+      {back.map((b, i) => (
+        <WallBox key={`b${i}`} room={room} r={b} y0={b.y0} y1={b.y1} color={c} shadow={!hidden} />
+      ))}
+      {a.window && !hidden && (
+        <group position={[wx, 0, wz]} rotation={[0, ROT_Y[a.wall], 0]}>
+          <Window o={{ id: a.id, kind: "window", wall: a.wall, offset: 0, width: a.window.width, height: a.window.height, sill: a.window.sill, hinge: "start" }} selected={false} />
+        </group>
+      )}
     </group>
   );
 }
@@ -119,7 +207,11 @@ export function Walls({
         const lenCm = wallLength(room, side);
         const ext = side === "north" || side === "south" ? T * 100 : 0;
         const ops = openings.filter((o) => o.wall === side);
-        const pieces = wallPieces(lenCm, ext, room.height, ops, isHidden ? CUT * 100 : room.height);
+        // Alcove mouths are full-height gaps in the host wall.
+        const mouths = room.alcoves
+          .filter((a) => a.wall === side)
+          .map((a) => ({ offset: a.offset + a.width / 2, width: a.width, sill: 0, height: room.height }) as Opening);
+        const pieces = wallPieces(lenCm, ext, room.height, [...ops, ...mouths], isHidden ? CUT * 100 : room.height);
         // Map wall-local (u along wall in cm, outward offset) to world.
         const toWorld = (u: number): [number, number] => {
           switch (side) {
@@ -174,6 +266,9 @@ export function Walls({
           </group>
         );
       })}
+      {room.alcoves.map((a) => (
+        <AlcoveWalls key={a.id} room={room} a={a} hidden={hidden.has(a.wall)} color={color} cutColor={cutColor} />
+      ))}
     </group>
   );
 }

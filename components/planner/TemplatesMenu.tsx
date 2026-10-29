@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, LayoutTemplate } from "lucide-react";
 import { usePlanner } from "@/lib/store";
 import { TEMPLATES } from "@/lib/templates";
-import { footprint, wallFrame } from "@/lib/geometry";
+import { alcoveRect, footprint, wallFrame } from "@/lib/geometry";
 import { toast } from "@/lib/toast";
 import { useCloud } from "@/lib/cloud";
 import type { Scene } from "@/lib/types";
@@ -12,9 +12,13 @@ import type { Scene } from "@/lib/types";
 /** Tiny plan preview: room outline, furniture footprints and wall openings. */
 function TemplatePreview({ scene }: { scene: Scene }) {
   const { room } = scene;
-  const pad = Math.max(room.width, room.length) * 0.06;
+  const pad = Math.max(room.width, room.length) * 0.06 + Math.max(0, ...room.alcoves.map((a) => a.depth));
   return (
     <svg viewBox={`${-pad} ${-pad} ${room.width + pad * 2} ${room.length + pad * 2}`} className="h-12 w-16 shrink-0" aria-hidden>
+      {room.alcoves.map((a) => {
+        const r = alcoveRect(room, a);
+        return <rect key={a.id} x={r.minX} y={r.minZ} width={r.maxX - r.minX} height={r.maxZ - r.minZ} fill="#efe6d6" stroke="#3b3733" strokeWidth={pad * 0.6} />;
+      })}
       <rect width={room.width} height={room.length} fill="#efe6d6" stroke="#3b3733" strokeWidth={pad * 0.6} />
       {scene.furniture.map((f) => (
         <polygon key={f.id} points={footprint(f).map((p) => `${p.x},${p.z}`).join(" ")} fill={f.color} stroke="#3b3733" strokeWidth={pad * 0.15} />

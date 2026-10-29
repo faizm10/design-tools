@@ -5,7 +5,7 @@ import { exampleScene, TEMPLATES } from "./templates";
 import { normalizeAngle, validateScene } from "./scene";
 
 export { normalizeAngle, validateScene };
-import { clampOpeningOffset, findFreeSpot, round1, wallLength, type Vec2 } from "./geometry";
+import { clampAlcove, clampOpeningOffset, findFreeSpot, round1, wallLength, type Vec2 } from "./geometry";
 import type {
   FurnitureItem,
   Opening,
@@ -163,7 +163,9 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
 
   updateRoom: (patch, coalesceKey) =>
     get().commit((s) => {
-      const room = { ...s.room, ...patch };
+      const merged = { ...s.room, ...patch };
+      // Keep alcoves within their walls when the room shrinks.
+      const room = { ...merged, alcoves: merged.alcoves.map((a) => clampAlcove(merged, a)) };
       // Keep openings on their walls when the room shrinks.
       const openings = s.openings.map((o) => {
         const width = Math.min(o.width, wallLength(room, o.wall));

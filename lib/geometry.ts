@@ -1,5 +1,5 @@
 import { isFloorCovering, isSurfaceItem, hasTopSurface } from "./catalog";
-import type { FurnitureItem, Opening, Room, WallSide } from "./types";
+import type { Alcove, FurnitureItem, Opening, Room, WallSide } from "./types";
 
 export type Vec2 = { x: number; z: number };
 
@@ -93,6 +93,61 @@ export function clampOpeningOffset(room: Room, o: Pick<Opening, "wall" | "width"
   return Math.min(max, Math.max(min, offset));
 }
 
+export interface Rect {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/** Plan-space rectangle covered by an alcove's floor. */
+export function alcoveRect(room: Room, a: Alcove): Rect {
+  switch (a.wall) {
+    case "north":
+      return { minX: a.offset, maxX: a.offset + a.width, minZ: -a.depth, maxZ: 0 };
+    case "south":
+      return { minX: a.offset, maxX: a.offset + a.width, minZ: room.length, maxZ: room.length + a.depth };
+    case "west":
+      return { minX: -a.depth, maxX: 0, minZ: a.offset, maxZ: a.offset + a.width };
+    case "east":
+      return { minX: room.width, maxX: room.width + a.depth, minZ: a.offset, maxZ: a.offset + a.width };
+  }
+}
+
+export function clampAlcove(room: Room, a: Alcove): Alcove {
+  const len = wallLength(room, a.wall);
+  const width = Math.max(30, Math.min(a.width, len));
+  const offset = Math.max(0, Math.min(a.offset, len - width));
+  const depth = Math.max(10, Math.min(a.depth, 400));
+  const window = a.window
+    ? {
+        width: Math.max(20, Math.min(a.window.width, width)),
+        sill: Math.max(0, Math.min(a.window.sill, room.height - 20)),
+        height: Math.max(20, Math.min(a.window.height, room.height - Math.max(0, a.window.sill))),
+      }
+    : null;
+  return { ...a, width, offset, depth, window };
+}
+
+const inRect = (p: Vec2, r: Rect, tol: number) => p.x >= r.minX - tol && p.x <= r.maxX + tol && p.z >= r.minZ - tol && p.z <= r.maxZ + tol;
+
+/** Whether a plan point lies on the room's floor, including alcoves. */
+export function insideRoom(room: Room, p: Vec2, tol = 0.5): boolean {
+  if (inRect(p, { minX: 0, maxX: room.width, minZ: 0, maxZ: room.length }, tol)) return true;
+  return room.alcoves.some((a) => inRect(p, alcoveRect(room, a), tol));
+}
+
+/** Corners plus points along each edge, so items straddling an alcove's mouth are checked properly. */
+function edgeSamples(poly: Vec2[], perEdge = 4): Vec2[] {
+  const out: Vec2[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    for (let k = 0; k < perEdge; k++) out.push({ x: a.x + ((b.x - a.x) * k) / perEdge, z: a.z + ((b.z - a.z) * k) / perEdge });
+  }
+  return out;
+}
+
 /** Nearest wall and the offset along it for a plan point (used when dragging openings). */
 export function nearestWall(room: Room, p: Vec2): { wall: WallSide; offset: number } {
   const d: [WallSide, number][] = [
@@ -148,6 +203,12 @@ export function snapPosition(
     const t = opts.threshold ?? 12;
     const xTargets = [0, room.width];
     const zTargets = [0, room.length];
+    // Alcove walls count as walls when the item is near the alcove.
+    for (const a of room.alcoves) {
+      const r = alcoveRect(room, a);
+      if (pos.z + hz > r.minZ - t && pos.z - hz < r.maxZ + t) xTargets.push(r.minX, r.maxX);
+      if (pos.x + hx > r.minX - t && pos.x - hx < r.maxX + t) zTargets.push(r.minZ, r.maxZ);
+    }
     if (!isFloorCovering(item.type)) {
       for (const o of others) {
         if (o.id === item.id || isFloorCovering(o.type)) continue;
@@ -213,7 +274,7 @@ export function computeWarnings(room: Room, items: FurnitureItem[], openings: Op
 
   for (const it of items) {
     const fp = prints.get(it.id)!;
-    if (fp.some((p) => p.x < -0.5 || p.z < -0.5 || p.x > room.width + 0.5 || p.z > room.length + 0.5)) {
+    if (edgeSamples(fp).some((p) => !insideRoom(room, p))) {
       warnings.push({ itemId: it.id, kind: "outside", message: `${it.name} extends outside the room` });
     }
     if (it.height + (elev.get(it.id) ?? 0) > room.height + 0.5) {

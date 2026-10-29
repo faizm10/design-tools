@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { catalogEntry } from "./catalog";
-import type { FurnitureItem, Opening, Room, Scene, WallSide } from "./types";
+import type { Alcove, FurnitureItem, Opening, Room, Scene, WallSide } from "./types";
 
 // Shared by the browser store and the API routes, so it must not touch browser APIs.
 
@@ -24,8 +24,23 @@ export function validateScene(data: unknown): Scene | null {
     height: clamp(num(room.height, 250), 180, 600),
     wallColor: str(room.wallColor, "#ece8e1"),
     floor: (["oak", "walnut", "ash", "tile", "carpet", "concrete"].includes(room.floor as string) ? room.floor : "oak") as Room["floor"],
+    alcoves: [],
   };
   const walls = ["north", "east", "south", "west"];
+  r.alcoves = (Array.isArray(room.alcoves) ? room.alcoves : [])
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === "object" && walls.includes((a as Alcove).wall))
+    .slice(0, 8)
+    .map((a) => {
+      const w = a.window as Record<string, unknown> | null | undefined;
+      return {
+        id: str(a.id, nanoid(8)),
+        wall: a.wall as WallSide,
+        offset: clamp(num(a.offset, 0), 0, 2000),
+        width: clamp(num(a.width, 150), 30, 2000),
+        depth: clamp(num(a.depth, 60), 10, 400),
+        window: w && typeof w === "object" ? { width: clamp(num(w.width, 80), 20, 2000), height: clamp(num(w.height, 120), 20, 600), sill: clamp(num(w.sill, 90), 0, 600) } : null,
+      };
+    });
   const openings: Opening[] = (Array.isArray(d.openings) ? d.openings : [])
     .filter((o): o is Record<string, unknown> => !!o && typeof o === "object" && walls.includes((o as Opening).wall))
     .map((o) => ({

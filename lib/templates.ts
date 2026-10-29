@@ -26,7 +26,7 @@ export function exampleScene(): Scene {
   n = 0;
   return {
     version: 1,
-    room: { name: "Main bedroom", width: 360, length: 420, height: 250, wallColor: "#ece8e1", floor: "oak" },
+    room: { name: "Main bedroom", width: 360, length: 420, height: 250, wallColor: "#ece8e1", floor: "oak", alcoves: [] },
     openings: [
       { id: "ex-door", kind: "door", wall: "south", offset: 300, width: 80, height: 205, sill: 0, hinge: "end" },
       { id: "ex-window", kind: "window", wall: "east", offset: 250, width: 120, height: 120, sill: 90, hinge: "start" },
@@ -50,26 +50,36 @@ export function exampleScene(): Scene {
 
 /**
  * Long 7.5 × 3.7 m bedroom traced from a hand sketch: bathroom and closet
- * doors on the north wall, the entrance on the east wall, and three
- * windows along the south wall (the middle one sits in a 174 × 63 cm
- * alcove, which the rectangular room model doesn't capture).
+ * doors on the north wall, the entrance on the east wall, windows at both
+ * ends of the south wall, and a 174 × 63 cm desk alcove between them with
+ * its own window.
  */
 export function sketchBedroomScene(): Scene {
   n = 0;
   return {
     version: 1,
-    room: { name: "My bedroom", width: 750, length: 370, height: 250, wallColor: "#ece8e1", floor: "oak" },
+    room: {
+      name: "My bedroom",
+      width: 750,
+      length: 370,
+      height: 250,
+      wallColor: "#ece8e1",
+      floor: "oak",
+      alcoves: [{ id: "sk-alcove", wall: "south", offset: 290, width: 174, depth: 63, window: { width: 73, height: 120, sill: 90 } }],
+    },
     openings: [
       { id: "sk-bathroom", kind: "door", wall: "north", offset: 60, width: 70, height: 205, sill: 0, hinge: "start" },
       { id: "sk-closet", kind: "door", wall: "north", offset: 652, width: 115, height: 205, sill: 0, hinge: "start" },
       { id: "sk-entrance", kind: "door", wall: "east", offset: 55, width: 80, height: 205, sill: 0, hinge: "start" },
       { id: "sk-window-w", kind: "window", wall: "south", offset: 55, width: 70, height: 120, sill: 90, hinge: "start" },
-      { id: "sk-window-alcove", kind: "window", wall: "south", offset: 386, width: 73, height: 120, sill: 90, hinge: "start" },
       { id: "sk-window-e", kind: "window", wall: "south", offset: 672, width: 70, height: 120, sill: 90, hinge: "start" },
     ],
     furniture: [
       item("bed-double", 80, 245, 0, { width: 135, depth: 200 }),
       item("dresser-3", 720, 295, 90, { width: 100, depth: 50 }),
+      // Desk against the alcove's back wall, facing into the room, with the chair pulled up to it.
+      item("desk", 377, 403, 180),
+      item("chair", 377, 345, 0),
     ],
   };
 }
@@ -78,7 +88,7 @@ export function sketchBedroomScene(): Scene {
 export function emptyScene(): Scene {
   return {
     version: 1,
-    room: { name: "New bedroom", width: 350, length: 400, height: 250, wallColor: "#f6f4ef", floor: "ash" },
+    room: { name: "New bedroom", width: 350, length: 400, height: 250, wallColor: "#f6f4ef", floor: "ash", alcoves: [] },
     openings: [{ id: "em-door", kind: "door", wall: "south", offset: 290, width: 80, height: 205, sill: 0, hinge: "end" }],
     furniture: [],
   };
@@ -93,6 +103,6 @@ export interface Template {
 
 export const TEMPLATES: Template[] = [
   { id: "example", name: "Furnished bedroom", description: "3.6 × 4.2 m, double bed, wardrobe and desk", build: exampleScene },
-  { id: "sketch", name: "My bedroom", description: "7.5 × 3.7 m, bathroom, closet, three windows", build: sketchBedroomScene },
+  { id: "sketch", name: "My bedroom", description: "7.5 × 3.7 m, desk alcove, bathroom and closet", build: sketchBedroomScene },
   { id: "empty", name: "Empty room", description: "3.5 × 4 m with a single door", build: emptyScene },
 ];

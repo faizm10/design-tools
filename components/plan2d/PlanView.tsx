@@ -5,6 +5,7 @@ import { usePlanner, normalizeAngle } from "@/lib/store";
 import { viewBridge } from "@/lib/bridge";
 import {
   aabb,
+  alcoveRect,
   clampOpeningOffset,
   halfExtents,
   surfaceElevations,
@@ -18,7 +19,7 @@ import {
 import { floorDataUrl, FLOOR_TILE_CM } from "@/lib/textures";
 import { formatLength } from "@/lib/units";
 import { isFloorCovering } from "@/lib/catalog";
-import type { FurnitureItem, Opening, Room, Unit } from "@/lib/types";
+import type { Alcove, FurnitureItem, Opening, Room, Unit } from "@/lib/types";
 import { PlanSymbol } from "./PlanSymbol";
 import { useWarnings } from "../planner/useWarnings";
 
@@ -268,6 +269,7 @@ export default function PlanView() {
   const selectedItem = selection?.kind === "furniture" ? furniture.find((f) => f.id === selection.id) : undefined;
   const selectedOpening = selection?.kind === "opening" ? openings.find((o) => o.id === selection.id) : undefined;
   const tile = FLOOR_TILE_CM[room.floor];
+  const floorRects = [{ minX: 0, maxX: room.width, minZ: 0, maxZ: room.length }, ...room.alcoves.map((a) => alcoveRect(room, a))];
 
   return (
     <div ref={wrapRef} className="absolute inset-0 overflow-hidden bg-[#f4f2ee]">
@@ -294,11 +296,18 @@ export default function PlanView() {
               </pattern>
             </defs>
 
-            <rect x={0} y={0} width={room.width} height={room.length} fill="url(#floor)" />
-            <rect x={0} y={0} width={room.width} height={room.length} fill="#ffffff" fillOpacity={0.35} />
-            <rect x={0} y={0} width={room.width} height={room.length} fill="url(#grid)" />
+            {floorRects.map((r, i) => (
+              <g key={i}>
+                <rect x={r.minX} y={r.minZ} width={r.maxX - r.minX} height={r.maxZ - r.minZ} fill="url(#floor)" />
+                <rect x={r.minX} y={r.minZ} width={r.maxX - r.minX} height={r.maxZ - r.minZ} fill="#ffffff" fillOpacity={0.35} />
+                <rect x={r.minX} y={r.minZ} width={r.maxX - r.minX} height={r.maxZ - r.minZ} fill="url(#grid)" />
+              </g>
+            ))}
 
             <Walls room={room} />
+            {room.alcoves.map((a) => (
+              <AlcoveWindow key={a.id} room={room} a={a} px={px} />
+            ))}
 
             {openings.map((o) => (
               <OpeningSymbol
@@ -368,6 +377,7 @@ export default function PlanView() {
             })}
 
             {showDims && <RoomDimensions room={room} unit={unit} px={px} />}
+            {showDims && room.alcoves.map((a) => <AlcoveDimensions key={a.id} room={room} a={a} unit={unit} px={px} />)}
             {selectedItem && showDims && <ItemDimensions it={selectedItem} room={room} unit={unit} px={px} />}
             {selectedOpening && showDims && <OpeningDimensions o={selectedOpening} room={room} unit={unit} px={px} />}
 
@@ -386,16 +396,117 @@ export default function PlanView() {
   );
 }
 
-function Walls({ room }: { room: Room }) {
+/** Plan rectangles for the room's walls, with gaps where alcoves open off them, plus each alcove's own walls. */
+function wallRects(room: Room) {
   const t = WALL;
+  const rects: { x: number; y: number; w: number; h: number }[] = [];
+  const W = room.width;
+  const L = room.length;
+  // Each main wall as a span along its axis, minus alcove mouths.
+  const spans: { wall: Alcove["wall"]; from: number; to: number }[] = [
+    { wall: "north", from: -t, to: W + t },
+    { wall: "south", from: -t, to: W + t },
+    { wall: "west", from: 0, to: L },
+    { wall: "east", from: 0, to: L },
+  ];
+  for (const sp of spans) {
+    const gaps = room.alcoves.filter((a) => a.wall === sp.wall).map((a) => [a.offset, a.offset + a.width] as const).sort((a, b) => a[0] - b[0]);
+    let u = sp.from;
+    const pieces: [number, number][] = [];
+    for (const [a, b] of gaps) {
+      if (a > u) pieces.push([u, a]);
+      u = Math.max(u, b);
+    }
+    if (u < sp.to) pieces.push([u, sp.to]);
+    for (const [a, b] of pieces) {
+      if (sp.wall === "north") rects.push({ x: a, y: -t, w: b - a, h: t });
+      if (sp.wall === "south") rects.push({ x: a, y: L, w: b - a, h: t });
+      if (sp.wall === "west") rects.push({ x: -t, y: a, w: t, h: b - a });
+      if (sp.wall === "east") rects.push({ x: W, y: a, w: t, h: b - a });
+    }
+  }
+  for (const a of room.alcoves) {
+    const r = alcoveRect(room, a);
+    const horizontal = a.wall === "north" || a.wall === "south";
+    if (horizontal) {
+      const y0 = a.wall === "south" ? r.minZ : r.minZ - t;
+      const h = a.depth + t;
+      rects.push({ x: r.minX - t, y: y0, w: t, h }, { x: r.maxX, y: y0, w: t, h });
+      rects.push({ x: r.minX - t, y: a.wall === "south" ? r.maxZ : r.minZ - t, w: a.width + 2 * t, h: t });
+    } else {
+      const x0 = a.wall === "east" ? r.minX : r.minX - t;
+      const w = a.depth + t;
+      rects.push({ x: x0, y: r.minZ - t, w, h: t }, { x: x0, y: r.maxZ, w, h: t });
+      rects.push({ x: a.wall === "east" ? r.maxX : r.minX - t, y: r.minZ - t, w: t, h: a.width + 2 * t });
+    }
+  }
+  return rects;
+}
+
+function Walls({ room }: { room: Room }) {
   return (
     <g fill="#3b3733" pointerEvents="none">
-      <rect x={-t} y={-t} width={room.width + 2 * t} height={t} />
-      <rect x={-t} y={room.length} width={room.width + 2 * t} height={t} />
-      <rect x={-t} y={0} width={t} height={room.length} />
-      <rect x={room.width} y={0} width={t} height={room.length} />
+      {wallRects(room).map((r, i) => (
+        <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} />
+      ))}
     </g>
   );
+}
+
+/** Window symbol on an alcove's back wall. */
+function AlcoveWindow({ room, a, px }: { room: Room; a: Alcove; px: number }) {
+  if (!a.window) return null;
+  const r = alcoveRect(room, a);
+  const t = WALL;
+  const w = a.window.width;
+  const horizontal = a.wall === "north" || a.wall === "south";
+  const cx = (r.minX + r.maxX) / 2;
+  const cz = (r.minZ + r.maxZ) / 2;
+  const box = horizontal
+    ? { x: cx - w / 2, y: a.wall === "south" ? r.maxZ : r.minZ - t, w, h: t }
+    : { x: a.wall === "east" ? r.maxX : r.minX - t, y: cz - w / 2, w: t, h: w };
+  const mid = horizontal ? { x1: box.x, x2: box.x + w, y1: box.y + t / 2, y2: box.y + t / 2 } : { x1: box.x + t / 2, x2: box.x + t / 2, y1: box.y, y2: box.y + w };
+  return (
+    <g pointerEvents="none">
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#dbe9f6" stroke="#3b3733" strokeWidth={1.2 * px} />
+      <line {...mid} stroke="#3b3733" strokeWidth={1.2 * px} />
+    </g>
+  );
+}
+
+function AlcoveDimensions({ room, a, unit, px }: { room: Room; a: Alcove; unit: Unit; px: number }) {
+  const r = alcoveRect(room, a);
+  const off = WALL + 22 * px;
+  switch (a.wall) {
+    case "south":
+      return (
+        <>
+          <DimLine from={{ x: r.minX, z: r.maxZ + off }} to={{ x: r.maxX, z: r.maxZ + off }} label={formatLength(a.width, unit)} px={px} />
+          <DimLine from={{ x: r.maxX + off, z: r.minZ }} to={{ x: r.maxX + off, z: r.maxZ }} label={formatLength(a.depth, unit)} px={px} />
+        </>
+      );
+    case "north":
+      return (
+        <>
+          <DimLine from={{ x: r.minX, z: r.minZ - off }} to={{ x: r.maxX, z: r.minZ - off }} label={formatLength(a.width, unit)} px={px} />
+          <DimLine from={{ x: r.maxX + off, z: r.minZ }} to={{ x: r.maxX + off, z: r.maxZ }} label={formatLength(a.depth, unit)} px={px} />
+        </>
+      );
+    case "west":
+      return (
+        <>
+          <DimLine from={{ x: r.minX - off, z: r.maxZ }} to={{ x: r.minX - off, z: r.minZ }} label={formatLength(a.width, unit)} px={px} />
+          <DimLine from={{ x: r.minX, z: r.maxZ + off }} to={{ x: r.maxX, z: r.maxZ + off }} label={formatLength(a.depth, unit)} px={px} />
+        </>
+      );
+    case "east":
+      return (
+        <>
+          <DimLine from={{ x: r.maxX + off, z: r.maxZ }} to={{ x: r.maxX + off, z: r.minZ }} label={formatLength(a.width, unit)} px={px} />
+          <DimLine from={{ x: r.minX, z: r.maxZ + off }} to={{ x: r.maxX, z: r.maxZ + off }} label={formatLength(a.depth, unit)} px={px} />
+        </>
+      );
+  }
 }
 
 function OpeningSymbol({

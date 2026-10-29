@@ -26,6 +26,18 @@ export type FurnitureType =
   | "table-lamp"
   | "plant";
 
+/** A recess that extends the room outward through one wall, e.g. a desk nook or bay. */
+export interface Alcove {
+  id: string;
+  wall: WallSide;
+  /** Distance from the wall's start corner to the alcove's near edge. */
+  offset: number;
+  width: number;
+  depth: number;
+  /** Optional window centred in the alcove's back wall. */
+  window: { width: number; height: number; sill: number } | null;
+}
+
 export interface Room {
   name: string;
   width: number; // x extent
@@ -33,6 +45,7 @@ export interface Room {
   height: number; // ceiling height
   wallColor: string;
   floor: FloorMaterial;
+  alcoves: Alcove[];
 }
 
 export interface Opening {
