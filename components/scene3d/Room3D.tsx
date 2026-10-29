@@ -4,15 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { floorCanvas, FLOOR_TILE_CM } from "@/lib/textures";
-import { alcoveRect, wallLength, type Rect } from "@/lib/geometry";
-import type { Alcove, Opening, Room, WallSide, WallVisibility } from "@/lib/types";
+import { alcoveRect, spaceRect, wallLength, type Rect } from "@/lib/geometry";
+import type { Alcove, Opening, Room, Space, WallSide, WallVisibility } from "@/lib/types";
 import { tone } from "./models";
 
 const T = 0.12; // wall thickness, metres
 const CUT = 0.1; // cutaway height, metres
 const SIDES: WallSide[] = ["north", "east", "south", "west"];
 
-export function Floor({ room, onClick }: { room: Room; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
+export function Floor({
+  room,
+  onClick,
+  onSpaceClick,
+}: {
+  room: Room;
+  onClick: (e: ThreeEvent<MouseEvent>) => void;
+  onSpaceClick: (e: ThreeEvent<MouseEvent>, sp: Space) => void;
+}) {
   const W = room.width / 100;
   const L = room.length / 100;
   const texture = useMemo(() => {
@@ -35,6 +43,9 @@ export function Floor({ room, onClick }: { room: Room; onClick: (e: ThreeEvent<M
       </mesh>
       {room.alcoves.map((a) => (
         <AlcoveFloor key={a.id} room={room} rect={alcoveRect(room, a)} texture={texture} tile={tile} onClick={onClick} />
+      ))}
+      {room.spaces.map((sp) => (
+        <SpaceFloor key={sp.id} room={room} sp={sp} onClick={(e) => onSpaceClick(e, sp)} />
       ))}
       {/* Ground outside the room so walls don't float. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
@@ -65,6 +76,92 @@ function AlcoveFloor({ room, rect, texture, tile, onClick }: { room: Room; rect:
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial map={map} roughness={room.floor === "tile" || room.floor === "concrete" ? 0.45 : 0.75} />
     </mesh>
+  );
+}
+
+/** A space's own floor, laid just above the main floor so it shows through where the two overlap. */
+function SpaceFloor({ room, sp, onClick }: { room: Room; sp: Space; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
+  const w = sp.width / 100;
+  const d = sp.length / 100;
+  const tile = FLOOR_TILE_CM[sp.floor] / 100;
+  const map = useMemo(() => {
+    const t = new THREE.CanvasTexture(floorCanvas(sp.floor));
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  }, [sp.floor]);
+  useEffect(() => () => map.dispose(), [map]);
+  map.repeat.set(w / tile, d / tile);
+  const [x, , z] = planToWorld(room, spaceRect(sp), 0, 0);
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.002, z]} receiveShadow onClick={onClick}>
+      <planeGeometry args={[w, d]} />
+      <meshStandardMaterial map={map} roughness={sp.floor === "tile" || sp.floor === "concrete" ? 0.45 : 0.75} polygonOffset polygonOffsetFactor={-1} />
+    </mesh>
+  );
+}
+
+/**
+ * Partition walls round a space, with a gap and door leaf for its door. A
+ * partition is cut down when the main wall on the same side is, so the
+ * camera can still see in.
+ */
+function SpaceWalls({
+  room,
+  sp,
+  hidden,
+  color,
+  cutColor,
+  selected,
+  onDown,
+}: {
+  room: Room;
+  sp: Space;
+  hidden: Set<WallSide>;
+  color: string;
+  cutColor: string;
+  selected: boolean;
+  onDown: (e: ThreeEvent<PointerEvent>, sp: Space) => void;
+}) {
+  const t = T * 100;
+  const doorH = Math.min(205, room.height - 5);
+  return (
+    <group onPointerDown={(e) => onDown(e, sp)}>
+      {SIDES.map((side) => {
+        const isHidden = hidden.has(side);
+        const maxY = isHidden ? CUT * 100 : room.height;
+        const along = side === "north" || side === "south";
+        const len = wallLength(sp, side);
+        const door = sp.door?.wall === side ? sp.door : null;
+        const gap = door ? [{ offset: door.offset, width: door.width, sill: 0, height: doorH } as Opening] : [];
+        // Plan rectangle of a strip of this wall between u0 and u1 (cm along it from its start corner).
+        const strip = (u0: number, u1: number): Rect => {
+          if (side === "north") return { minX: sp.x + u0, maxX: sp.x + u1, minZ: sp.z - t, maxZ: sp.z };
+          if (side === "south") return { minX: sp.x + u0, maxX: sp.x + u1, minZ: sp.z + sp.length, maxZ: sp.z + sp.length + t };
+          if (side === "west") return { minX: sp.x - t, maxX: sp.x, minZ: sp.z + u0, maxZ: sp.z + u1 };
+          return { minX: sp.x + sp.width, maxX: sp.x + sp.width + t, minZ: sp.z + u0, maxZ: sp.z + u1 };
+        };
+        const pieces = wallPieces(len, along ? t : 0, room.height, gap, maxY);
+        const doorCentre = door ? planToWorld(room, strip(door.offset, door.offset), 0, 0) : null;
+        return (
+          <group key={side}>
+            {pieces.map((p, i) => (
+              <WallBox key={i} room={room} r={strip(p.u0, p.u1)} y0={p.y0} y1={p.y1} color={isHidden ? cutColor : color} shadow={!isHidden} />
+            ))}
+            {door && doorCentre && !isHidden && (
+              <group position={[doorCentre[0], 0, doorCentre[2]]} rotation={[0, ROT_Y[side], 0]}>
+                <Door
+                  o={{ id: sp.id, kind: "door", wall: side, offset: 0, width: door.width, height: doorH, sill: 0, hinge: door.hinge, swing: door.swing }}
+                  sx={side === "north" || side === "east" ? 1 : -1}
+                  selected={selected}
+                />
+              </group>
+            )}
+          </group>
+        );
+      })}
+    </group>
   );
 }
 
@@ -187,13 +284,17 @@ export function Walls({
   openings,
   hidden,
   selectedOpening,
+  selectedSpace,
   onOpeningDown,
+  onSpaceDown,
 }: {
   room: Room;
   openings: Opening[];
   hidden: Set<WallSide>;
   selectedOpening?: string;
+  selectedSpace?: string;
   onOpeningDown: (e: ThreeEvent<PointerEvent>, o: Opening) => void;
+  onSpaceDown: (e: ThreeEvent<PointerEvent>, sp: Space) => void;
 }) {
   const W = room.width / 100;
   const L = room.length / 100;
@@ -269,6 +370,9 @@ export function Walls({
       {room.alcoves.map((a) => (
         <AlcoveWalls key={a.id} room={room} a={a} hidden={hidden.has(a.wall)} color={color} cutColor={cutColor} />
       ))}
+      {room.spaces.map((sp) => (
+        <SpaceWalls key={sp.id} room={room} sp={sp} hidden={hidden} color={color} cutColor={cutColor} selected={selectedSpace === sp.id} onDown={onSpaceDown} />
+      ))}
     </group>
   );
 }
@@ -328,6 +432,8 @@ function Door({ o, sx, selected }: { o: Opening; sx: 1 | -1; selected: boolean }
   const hingeX = (o.hinge === "start" ? -w / 2 : w / 2) * sx;
   const sgn = hingeX > 0 ? 1 : -1;
   const open = 0.42; // radians ajar, swinging into the room (+z)
+  // An outward door is the same leaf mirrored through the wall (three.js handles the flipped winding).
+  const mirror = o.swing === "out" ? -1 : 1;
   return (
     <group>
       <mesh position={[0, h + f / 2, 0]}>
@@ -340,6 +446,7 @@ function Door({ o, sx, selected }: { o: Opening; sx: 1 | -1; selected: boolean }
           <meshStandardMaterial color={frame} roughness={0.5} />
         </mesh>
       ))}
+      <group scale={[1, 1, mirror]}>
       <group position={[hingeX, 0, T / 2]} rotation={[0, sgn * open, 0]}>
         <mesh position={[-sgn * leafW / 2, h / 2, -0.02]} castShadow receiveShadow>
           <boxGeometry args={[leafW, h - 0.01, 0.04]} />
@@ -349,6 +456,7 @@ function Door({ o, sx, selected }: { o: Opening; sx: 1 | -1; selected: boolean }
           <boxGeometry args={[0.12, 0.018, 0.018]} />
           <meshStandardMaterial color="#8b8d90" metalness={0.8} roughness={0.3} />
         </mesh>
+      </group>
       </group>
     </group>
   );
