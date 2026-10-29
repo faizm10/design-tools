@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { catalogEntry } from "./catalog";
 import { exampleScene, TEMPLATES } from "./templates";
 import { normalizeAngle, validateScene } from "./scene";
+import { mergeScenes } from "./collab/merge";
 
 export { normalizeAngle, validateScene };
 import { clampAlcove, clampOpeningOffset, clampSpace, footprint, polygonsOverlap, spaceRect, findWallSpot, findFreeSpot, moveWall as moveWallTo, round1, wallLength, withRoom, type Vec2 } from "./geometry";
@@ -57,6 +58,12 @@ export interface PlannerState extends Prefs {
   endGesture: () => void;
   undo: () => void;
   redo: () => void;
+  /**
+   * Show a collaborator's changes. Not an undoable step: instead every
+   * history entry is rebased onto the new scene, so undo and redo only ever
+   * revert your own edits and never someone else's.
+   */
+  applyRemote: (scene: Scene) => void;
 
   updateRoom: (patch: Partial<Room>, coalesceKey?: string) => void;
   addFurniture: (catalogId: string, at?: Vec2) => string | null;
@@ -171,6 +178,15 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     const next = future[0];
     lastKey = undefined;
     set({ scene: next, past: pushPast(past, scene), future: future.slice(1), selection: keepSelection(next, selection) });
+  },
+
+  applyRemote: (next) => {
+    const { scene, past, future, selection } = get();
+    if (next === scene) return;
+    // In each snapshot keep what differs from now (what undo would restore); take everything else from `next`.
+    const rebase = (h: Scene) => mergeScenes(scene, h, next);
+    lastKey = undefined;
+    set({ scene: next, past: past.map(rebase), future: future.map(rebase), selection: keepSelection(next, selection) });
   },
 
   updateRoom: (patch, coalesceKey) => get().commit((s) => withRoom(s, { ...s.room, ...patch }), coalesceKey),

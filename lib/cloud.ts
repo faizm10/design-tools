@@ -3,6 +3,7 @@ import { usePlanner } from "./store";
 import { validateScene } from "./scene";
 import { toast } from "./toast";
 import type { PlanSummary } from "./plans-types";
+import { syncBridge, useCollab } from "./collab/session";
 import type { Scene } from "./types";
 
 const CLOUD_KEY = "bedroom-planner:cloud";
@@ -24,7 +25,7 @@ interface CloudState extends Linked {
   user: CloudUser | null;
   sessionPending: boolean;
   saving: boolean;
-  dialog: null | "auth" | "plans";
+  dialog: null | "auth" | "plans" | "share";
   /** Save as soon as sign-in completes (set when Save was pressed while signed out). */
   saveAfterAuth: boolean;
 
@@ -37,6 +38,12 @@ interface CloudState extends Linked {
   listPlans: () => Promise<PlanSummary[] | null>;
   /** Stop tracking a cloud plan, e.g. after loading a template or signing out. */
   detach: () => void;
+  /** Mark `scene` as saved, e.g. after live sync sent it. */
+  markSynced: (scene: Scene) => void;
+  /** Join a plan from an invite link token, then open it. */
+  acceptInvite: (token: string) => Promise<void>;
+  /** Stop collaborating on a plan someone shared with you. */
+  leavePlan: (id: string) => Promise<boolean>;
 }
 
 /** FNV-1a over the serialized scene: cheap and stable enough for dirty checks. */
@@ -123,6 +130,14 @@ export const useCloud = create<CloudState>()((set, get) => {
         get().openDialog("auth", true);
         return;
       }
+      // A shared plan saves continuously; Save just makes sure the last edit went out.
+      if (planId && !asCopy && syncBridge.flush && useCollab.getState().shared) {
+        set({ saving: true });
+        const ok = await syncBridge.flush();
+        set({ saving: false });
+        if (!ok) toast("Couldn’t save your latest change yet. It will be sent when the connection is back.", { tone: "error" });
+        return;
+      }
       const scene = usePlanner.getState().scene;
       const hash = sceneHash(scene);
       set({ saving: true });
@@ -184,5 +199,31 @@ export const useCloud = create<CloudState>()((set, get) => {
     },
 
     detach: () => link({ planId: null, planName: null, savedHash: null }),
+
+    markSynced: (scene) => {
+      const { planId, planName } = get();
+      if (planId) link({ planId, planName, savedHash: sceneHash(scene) });
+    },
+
+    acceptInvite: async (token) => {
+      const res = await api<{ planId: string; name: string }>(`/api/invites/${encodeURIComponent(token)}`, { method: "POST" });
+      if (!res.ok) {
+        toast(res.error, { tone: "error" });
+        return;
+      }
+      await get().openPlan(res.data.planId);
+    },
+
+    leavePlan: async (id) => {
+      const user = get().user;
+      if (!user) return false;
+      const res = await api<void>(`/api/plans/${id}/members/${user.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        toast(res.error, { tone: "error" });
+        return false;
+      }
+      if (get().planId === id) get().detach();
+      return true;
+    },
   };
 });
