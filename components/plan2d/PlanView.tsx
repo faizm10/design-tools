@@ -6,20 +6,27 @@ import { viewBridge } from "@/lib/bridge";
 import {
   aabb,
   alcoveRect,
+  spaceRect,
+  clampAlcove,
   clampOpeningOffset,
   halfExtents,
+  moveWall,
   surfaceElevations,
   nearestWall,
   round1,
   snapPosition,
   wallFrame,
   wallLength,
+  wallPosition,
+  clampSpace,
+  MIN_SPACE,
   type Vec2,
+  type WallFrame,
 } from "@/lib/geometry";
 import { floorDataUrl, FLOOR_TILE_CM } from "@/lib/textures";
 import { formatLength } from "@/lib/units";
 import { isFloorCovering } from "@/lib/catalog";
-import type { Alcove, FurnitureItem, Opening, Room, Unit } from "@/lib/types";
+import type { Alcove, DoorSwing, FloorMaterial, FurnitureItem, Opening, Room, Scene, Selection, Space, Unit, WallSide } from "@/lib/types";
 import { PlanSymbol } from "./PlanSymbol";
 import { useWarnings } from "../planner/useWarnings";
 
@@ -30,12 +37,32 @@ const FONT = "ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
 
 type Camera = { s: number; tx: number; ty: number };
 
+type AlcoveEdge = "start" | "end" | "back";
+/** What a piece of wall belongs to: one of the room's four walls, or one edge of an alcove. */
+type WallOwner = { kind: "wall"; wall: WallSide } | { kind: "alcove"; id: string; edge: AlcoveEdge };
+type WallRect = { x: number; y: number; w: number; h: number; owner: WallOwner };
+
+const isHorizontal = (w: WallSide) => w === "north" || w === "south";
+const ownerKey = (o: WallOwner) => (o.kind === "wall" ? o.wall : `${o.id}:${o.edge}`);
+const ownerCursor = (o: WallOwner, room: Room) => {
+  const wall = o.kind === "wall" ? o.wall : room.alcoves.find((a) => a.id === o.id)?.wall ?? "north";
+  // An alcove's side walls run across its parent wall, so they drag the other way.
+  const acrossParent = o.kind === "alcove" && o.edge !== "back";
+  return isHorizontal(wall) !== acrossParent ? "ns-resize" : "ew-resize";
+};
+
 type Gesture =
   | { kind: "pan"; startX: number; startY: number; cam: Camera; moved: boolean }
   | { kind: "move"; id: string; offset: Vec2 }
   | { kind: "resize"; id: string; axis: "x" | "z"; sign: 1 | -1 }
   | { kind: "rotate"; id: string }
-  | { kind: "opening"; id: string; grab: number };
+  | { kind: "opening"; id: string; grab: number }
+  /** Moving a room wall re-bases the plan, so it works from the scene and camera at the start of the drag. */
+  | { kind: "wall"; wall: WallSide; start: Scene; cam: Camera; grab: number }
+  | { kind: "alcove"; id: string; edge: AlcoveEdge; start: Alcove; grab: number }
+  | { kind: "space-move"; id: string; offset: Vec2 }
+  | { kind: "space-edge"; id: string; wall: WallSide; start: Space; grab: number }
+  | { kind: "space-door"; id: string; grab: number };
 
 export default function PlanView() {
   const scene = usePlanner((s) => s.scene);
@@ -51,16 +78,31 @@ export default function PlanView() {
   // A user-adjusted camera is tied to the layout it was made for; when the
   // viewport or room size changes the view falls back to fitting the room.
   const [userCam, setUserCam] = useState<{ key: string; cam: Camera } | null>(null);
+  // While a wall is dragged the room size changes every frame; the camera is
+  // held here instead of refitting, so the wall stays under the pointer.
+  const [dragCam, setDragCam] = useState<Camera | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const camRef = useRef<Camera | null>(null);
 
+  // Frame the room plus anything built onto it outside its walls.
+  const bounds = useMemo(() => {
+    const rects = [{ minX: 0, maxX: room.width, minZ: 0, maxZ: room.length }, ...room.alcoves.map((a) => alcoveRect(room, a)), ...room.spaces.map(spaceRect)];
+    return {
+      minX: Math.min(...rects.map((r) => r.minX)),
+      maxX: Math.max(...rects.map((r) => r.maxX)),
+      minZ: Math.min(...rects.map((r) => r.minZ)),
+      maxZ: Math.max(...rects.map((r) => r.maxZ)),
+    };
+  }, [room]);
   const fit = useCallback(
     (w = size.w, h = size.h): Camera => {
       const margin = 90;
-      const s = Math.min(w / (room.width + margin * 2), h / (room.length + margin * 2));
-      return { s, tx: (w - room.width * s) / 2, ty: (h - room.length * s) / 2 };
+      const bw = bounds.maxX - bounds.minX;
+      const bh = bounds.maxZ - bounds.minZ;
+      const s = Math.min(w / (bw + margin * 2), h / (bh + margin * 2));
+      return { s, tx: (w - bw * s) / 2 - bounds.minX * s, ty: (h - bh * s) / 2 - bounds.minZ * s };
     },
-    [room.width, room.length, size.w, size.h],
+    [bounds, size.w, size.h],
   );
 
   useEffect(() => {
@@ -75,8 +117,9 @@ export default function PlanView() {
   }, []);
 
   // Refit when the viewport or the room dimensions change.
-  const layoutKey = `${size.w}x${size.h}:${room.width}x${room.length}`;
-  const cam = userCam?.key === layoutKey ? userCam.cam : fit();
+  const keyFor = (r: Room) => `${size.w}x${size.h}:${r.width}x${r.length}`;
+  const layoutKey = keyFor(room);
+  const cam = dragCam ?? (userCam?.key === layoutKey ? userCam.cam : fit());
   useEffect(() => {
     camRef.current = cam;
   });
@@ -212,6 +255,100 @@ export default function PlanView() {
         if (rotation === it.rotation) return s;
         return { ...s, furniture: s.furniture.map((f) => (f.id === g.id ? { ...f, rotation } : f)) };
       });
+    } else if (g.kind === "wall") {
+      // Measure in the frame the drag started in; moving the west or north wall moves the origin.
+      const r = svgRef.current!.getBoundingClientRect();
+      const q = { x: (e.clientX - r.left - g.cam.tx) / g.cam.s, z: (e.clientY - r.top - g.cam.ty) / g.cam.s };
+      let pos = (isHorizontal(g.wall) ? q.z : q.x) + g.grab;
+      if (grid && !e.altKey) {
+        // Snap the resulting room size, not the raw coordinate.
+        const far = g.wall === "west" ? g.start.room.width : g.wall === "north" ? g.start.room.length : 0;
+        pos = far ? far - Math.round((far - pos) / grid) * grid : Math.round(pos / grid) * grid;
+      }
+      const { scene: next, shift } = moveWall(g.start, g.wall, pos);
+      const held = { ...g.cam, tx: g.cam.tx + shift.x * g.cam.s, ty: g.cam.ty + shift.z * g.cam.s };
+      // Update the ref now too: pointer-up may arrive before the next render.
+      camRef.current = held;
+      setDragCam(held);
+      st.gestureUpdate((s) => (s.room.width === next.room.width && s.room.length === next.room.length ? s : next));
+    } else if (g.kind === "alcove") {
+      st.gestureUpdate((s) => {
+        const a0 = g.start;
+        const u = isHorizontal(a0.wall) ? p.x : p.z;
+        const snap = (v: number) => (grid && !e.altKey ? Math.round(v / grid) * grid : round1(v));
+        let patch: Partial<Alcove>;
+        if (g.edge === "back") {
+          patch = { depth: snap(outward(s.room, a0.wall, p) + g.grab) };
+        } else if (g.edge === "start") {
+          const end = a0.offset + a0.width;
+          const offset = Math.max(0, Math.min(snap(u + g.grab), end - 30));
+          patch = { offset, width: end - offset };
+        } else {
+          patch = { width: Math.min(wallLength(s.room, a0.wall) - a0.offset, Math.max(30, snap(u + g.grab) - a0.offset)) };
+        }
+        const cur = s.room.alcoves.find((a) => a.id === g.id);
+        if (!cur) return s;
+        const next = clampAlcove(s.room, { ...cur, ...patch });
+        if (next.offset === cur.offset && next.width === cur.width && next.depth === cur.depth) return s;
+        return { ...s, room: { ...s.room, alcoves: s.room.alcoves.map((a) => (a.id === g.id ? next : a)) } };
+      });
+    } else if (g.kind === "space-move" || g.kind === "space-edge") {
+      st.gestureUpdate((s) => {
+        const sp = s.room.spaces.find((x) => x.id === g.id);
+        if (!sp) return s;
+        const snapOn = !e.altKey;
+        // Space edges snap to the main walls' inner and outer faces, otherwise to the grid.
+        const wallHit = (v: number, axis: "x" | "z") => {
+          if (!snapOn || !st.wallSnap) return null;
+          const far = axis === "x" ? s.room.width : s.room.length;
+          const hits = [0, far, -WALL, far + WALL].filter((t) => Math.abs(v - t) < 12);
+          return hits.length ? hits.reduce((a, b) => (Math.abs(v - a) <= Math.abs(v - b) ? a : b)) : null;
+        };
+        const gridSnap = (v: number) => (snapOn && grid ? Math.round(v / grid) * grid : round1(v));
+        const edgeSnap = (v: number, axis: "x" | "z") => wallHit(v, axis) ?? gridSnap(v);
+        let patch: Partial<Space>;
+        if (g.kind === "space-move") {
+          const tx = p.x + g.offset.x;
+          const tz = p.z + g.offset.z;
+          // Pull whichever edge is nearer a wall flush against it; otherwise snap the near edge to the grid.
+          const pick = (lo: number, size: number, axis: "x" | "z") => {
+            const a = wallHit(lo, axis);
+            const b = wallHit(lo + size, axis);
+            if (a !== null && (b === null || Math.abs(a - lo) <= Math.abs(b - size - lo))) return a;
+            if (b !== null) return b - size;
+            return gridSnap(lo);
+          };
+          patch = { x: pick(tx, sp.width, "x"), z: pick(tz, sp.length, "z") };
+        } else {
+          const a0 = g.start;
+          const v = (isHorizontal(g.wall) ? p.z : p.x) + g.grab;
+          const axis = isHorizontal(g.wall) ? "z" : "x";
+          const edge = edgeSnap(v, axis);
+          if (g.wall === "east") patch = { width: Math.max(MIN_SPACE, edge - a0.x) };
+          else if (g.wall === "south") patch = { length: Math.max(MIN_SPACE, edge - a0.z) };
+          else if (g.wall === "west") {
+            const x = Math.min(edge, a0.x + a0.width - MIN_SPACE);
+            patch = { x, width: a0.x + a0.width - x };
+          } else {
+            const z = Math.min(edge, a0.z + a0.length - MIN_SPACE);
+            patch = { z, length: a0.z + a0.length - z };
+          }
+        }
+        const next = clampSpace(s.room, { ...sp, ...patch });
+        if (next.x === sp.x && next.z === sp.z && next.width === sp.width && next.length === sp.length && next.door === sp.door) return s;
+        return { ...s, room: { ...s.room, spaces: s.room.spaces.map((x) => (x.id === g.id ? next : x)) } };
+      });
+    } else if (g.kind === "space-door") {
+      st.gestureUpdate((s) => {
+        const sp = s.room.spaces.find((x) => x.id === g.id);
+        if (!sp?.door) return s;
+        const { wall, offset } = nearestWall(sp, p);
+        let off = offset + (wall === sp.door.wall ? g.grab : 0);
+        if (grid && !e.altKey) off = Math.round(off / grid) * grid;
+        const next = clampSpace(s.room, { ...sp, door: { ...sp.door, wall, offset: round1(off) } });
+        if (next.door!.wall === sp.door.wall && next.door!.offset === sp.door.offset) return s;
+        return { ...s, room: { ...s.room, spaces: s.room.spaces.map((x) => (x.id === g.id ? next : x)) } };
+      });
     } else if (g.kind === "opening") {
       st.gestureUpdate((s) => {
         const o = s.openings.find((x) => x.id === g.id);
@@ -235,6 +372,11 @@ export default function PlanView() {
     if (g.kind === "pan") {
       if (!g.moved) store().select(null);
     } else {
+      if (g.kind === "wall" && camRef.current) {
+        // Keep the view where the drag left it rather than refitting to the new size.
+        setUserCam({ key: keyFor(store().scene.room), cam: camRef.current });
+        setDragCam(null);
+      }
       store().endGesture();
       store().setDragging(false);
     }
@@ -259,6 +401,40 @@ export default function PlanView() {
     startGesture(e, { kind: "opening", id: o.id, grab: o.offset - along });
   };
 
+  const onWallDown = (e: React.PointerEvent, owner: WallOwner) => {
+    if (e.button !== 0) return;
+    const p = toPlan(e.clientX, e.clientY)!;
+    const { scene: s } = store();
+    if (owner.kind === "wall") {
+      store().select({ kind: "wall", wall: owner.wall });
+      const grab = wallPosition(s.room, owner.wall) - (isHorizontal(owner.wall) ? p.z : p.x);
+      startGesture(e, { kind: "wall", wall: owner.wall, start: s, cam, grab });
+      return;
+    }
+    const a = s.room.alcoves.find((x) => x.id === owner.id);
+    if (!a) return;
+    setCam(cam);
+    store().select({ kind: "alcove", id: a.id });
+    const u = isHorizontal(a.wall) ? p.x : p.z;
+    const grab = owner.edge === "back" ? a.depth - outward(s.room, a.wall, p) : owner.edge === "start" ? a.offset - u : a.offset + a.width - u;
+    startGesture(e, { kind: "alcove", id: a.id, edge: owner.edge, start: a, grab });
+  };
+
+  const onSpaceDown = (e: React.PointerEvent, sp: Space, part: "floor" | "door" | WallSide) => {
+    if (e.button !== 0) return;
+    // Pin the view: the fit includes spaces, so it would otherwise chase the drag.
+    setCam(cam);
+    store().select({ kind: "space", id: sp.id });
+    const p = toPlan(e.clientX, e.clientY)!;
+    if (part === "floor") return startGesture(e, { kind: "space-move", id: sp.id, offset: { x: sp.x - p.x, z: sp.z - p.z } });
+    if (part === "door") {
+      const along = isHorizontal(sp.door!.wall) ? p.x - sp.x : p.z - sp.z;
+      return startGesture(e, { kind: "space-door", id: sp.id, grab: sp.door!.offset - along });
+    }
+    const face = part === "north" ? sp.z : part === "south" ? sp.z + sp.length : part === "west" ? sp.x : sp.x + sp.width;
+    startGesture(e, { kind: "space-edge", id: sp.id, wall: part, start: sp, grab: face - (isHorizontal(part) ? p.z : p.x) });
+  };
+
   const px = 1 / cam.s;
   // Draw rugs first, then by top height, so a lamp on a nightstand stays visible.
   const sorted = useMemo(() => {
@@ -270,6 +446,8 @@ export default function PlanView() {
   const selectedOpening = selection?.kind === "opening" ? openings.find((o) => o.id === selection.id) : undefined;
   const tile = FLOOR_TILE_CM[room.floor];
   const floorRects = [{ minX: 0, maxX: room.width, minZ: 0, maxZ: room.length }, ...room.alcoves.map((a) => alcoveRect(room, a))];
+  const selectedSpace = selection?.kind === "space" ? room.spaces.find((sp) => sp.id === selection.id) : undefined;
+  const spaceFloors = [...new Set(room.spaces.map((sp) => sp.floor).filter((f) => f !== room.floor))];
 
   return (
     <div ref={wrapRef} className="absolute inset-0 overflow-hidden bg-[#f4f2ee]">
@@ -291,6 +469,11 @@ export default function PlanView() {
               <pattern id="floor" patternUnits="userSpaceOnUse" width={tile} height={tile}>
                 <image href={floorDataUrl(room.floor)} width={tile} height={tile} preserveAspectRatio="none" />
               </pattern>
+              {spaceFloors.map((f) => (
+                <pattern key={f} id={`floor-${f}`} patternUnits="userSpaceOnUse" width={FLOOR_TILE_CM[f]} height={FLOOR_TILE_CM[f]}>
+                  <image href={floorDataUrl(f)} width={FLOOR_TILE_CM[f]} height={FLOOR_TILE_CM[f]} preserveAspectRatio="none" />
+                </pattern>
+              ))}
               <pattern id="grid" patternUnits="userSpaceOnUse" width={50} height={50}>
                 <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#000" strokeOpacity={0.08} strokeWidth={px} />
               </pattern>
@@ -304,15 +487,32 @@ export default function PlanView() {
               </g>
             ))}
 
-            <Walls room={room} />
+            {room.spaces.map((sp) => (
+              <SpaceShape key={sp.id} sp={sp} mainFloor={room.floor} px={px} selected={selectedSpace?.id === sp.id} onPointerDown={(e, part) => onSpaceDown(e, sp, part)} />
+            ))}
+
+            <Walls room={room} selection={selection} px={px} onPointerDown={onWallDown} />
             {room.alcoves.map((a) => (
               <AlcoveWindow key={a.id} room={room} a={a} px={px} />
             ))}
 
+            {room.spaces.map((sp) =>
+              sp.door ? (
+                <OpeningSymbol
+                  key={`d-${sp.id}`}
+                  f={wallFrame(sp, sp.door.wall)}
+                  o={{ kind: "door", ...sp.door }}
+                  px={px}
+                  selected={selectedSpace?.id === sp.id}
+                  onPointerDown={(e) => onSpaceDown(e, sp, "door")}
+                />
+              ) : null,
+            )}
+
             {openings.map((o) => (
               <OpeningSymbol
                 key={o.id}
-                room={room}
+                f={wallFrame(room, o.wall)}
                 o={o}
                 px={px}
                 selected={selectedOpening?.id === o.id}
@@ -380,6 +580,13 @@ export default function PlanView() {
             {showDims && room.alcoves.map((a) => <AlcoveDimensions key={a.id} room={room} a={a} unit={unit} px={px} />)}
             {selectedItem && showDims && <ItemDimensions it={selectedItem} room={room} unit={unit} px={px} />}
             {selectedOpening && showDims && <OpeningDimensions o={selectedOpening} room={room} unit={unit} px={px} />}
+            {selection?.kind === "wall" && <WallDimension room={room} wall={selection.wall} unit={unit} px={px} />}
+            {selectedSpace && showDims && (
+              <>
+                <WallDimension room={selectedSpace} wall="north" unit={unit} px={px} />
+                <WallDimension room={selectedSpace} wall="west" unit={unit} px={px} />
+              </>
+            )}
 
             {selectedItem && (
               <Handles
@@ -397,9 +604,9 @@ export default function PlanView() {
 }
 
 /** Plan rectangles for the room's walls, with gaps where alcoves open off them, plus each alcove's own walls. */
-function wallRects(room: Room) {
+function wallRects(room: Room): WallRect[] {
   const t = WALL;
-  const rects: { x: number; y: number; w: number; h: number }[] = [];
+  const rects: WallRect[] = [];
   const W = room.width;
   const L = room.length;
   // Each main wall as a span along its axis, minus alcove mouths.
@@ -418,39 +625,169 @@ function wallRects(room: Room) {
       u = Math.max(u, b);
     }
     if (u < sp.to) pieces.push([u, sp.to]);
+    const owner: WallOwner = { kind: "wall", wall: sp.wall };
     for (const [a, b] of pieces) {
-      if (sp.wall === "north") rects.push({ x: a, y: -t, w: b - a, h: t });
-      if (sp.wall === "south") rects.push({ x: a, y: L, w: b - a, h: t });
-      if (sp.wall === "west") rects.push({ x: -t, y: a, w: t, h: b - a });
-      if (sp.wall === "east") rects.push({ x: W, y: a, w: t, h: b - a });
+      if (sp.wall === "north") rects.push({ x: a, y: -t, w: b - a, h: t, owner });
+      if (sp.wall === "south") rects.push({ x: a, y: L, w: b - a, h: t, owner });
+      if (sp.wall === "west") rects.push({ x: -t, y: a, w: t, h: b - a, owner });
+      if (sp.wall === "east") rects.push({ x: W, y: a, w: t, h: b - a, owner });
     }
   }
   for (const a of room.alcoves) {
     const r = alcoveRect(room, a);
-    const horizontal = a.wall === "north" || a.wall === "south";
-    if (horizontal) {
+    const edge = (e: AlcoveEdge): WallOwner => ({ kind: "alcove", id: a.id, edge: e });
+    if (isHorizontal(a.wall)) {
       const y0 = a.wall === "south" ? r.minZ : r.minZ - t;
       const h = a.depth + t;
-      rects.push({ x: r.minX - t, y: y0, w: t, h }, { x: r.maxX, y: y0, w: t, h });
-      rects.push({ x: r.minX - t, y: a.wall === "south" ? r.maxZ : r.minZ - t, w: a.width + 2 * t, h: t });
+      rects.push({ x: r.minX - t, y: y0, w: t, h, owner: edge("start") }, { x: r.maxX, y: y0, w: t, h, owner: edge("end") });
+      rects.push({ x: r.minX - t, y: a.wall === "south" ? r.maxZ : r.minZ - t, w: a.width + 2 * t, h: t, owner: edge("back") });
     } else {
       const x0 = a.wall === "east" ? r.minX : r.minX - t;
       const w = a.depth + t;
-      rects.push({ x: x0, y: r.minZ - t, w, h: t }, { x: x0, y: r.maxZ, w, h: t });
-      rects.push({ x: a.wall === "east" ? r.maxX : r.minX - t, y: r.minZ - t, w: t, h: a.width + 2 * t });
+      rects.push({ x: x0, y: r.minZ - t, w, h: t, owner: edge("start") }, { x: x0, y: r.maxZ, w, h: t, owner: edge("end") });
+      rects.push({ x: a.wall === "east" ? r.maxX : r.minX - t, y: r.minZ - t, w: t, h: a.width + 2 * t, owner: edge("back") });
     }
   }
   return rects;
 }
 
-function Walls({ room }: { room: Room }) {
+/**
+ * A space's floor (drag to move), its four partition walls (drag to resize)
+ * and its name. The door is drawn separately so it sits above the main walls.
+ */
+function SpaceShape({
+  sp,
+  mainFloor,
+  px,
+  selected,
+  onPointerDown,
+}: {
+  sp: Space;
+  mainFloor: FloorMaterial;
+  px: number;
+  selected: boolean;
+  onPointerDown: (e: React.PointerEvent, part: "floor" | WallSide) => void;
+}) {
+  const t = WALL;
+  const { x, z, width: w, length: l } = sp;
+  const walls: { side: WallSide; r: { x: number; y: number; w: number; h: number } }[] = [
+    { side: "north", r: { x: x - t, y: z - t, w: w + 2 * t, h: t } },
+    { side: "south", r: { x: x - t, y: z + l, w: w + 2 * t, h: t } },
+    { side: "west", r: { x: x - t, y: z, w: t, h: l } },
+    { side: "east", r: { x: x + w, y: z, w: t, h: l } },
+  ];
+  const pad = 4 * px;
+  const area = `${((w * l) / 10000).toFixed(1)} m²`;
+  const showLabel = w / px > sp.name.length * 6.5 + 12 && l / px > 34;
   return (
-    <g fill="#3b3733" pointerEvents="none">
-      {wallRects(room).map((r, i) => (
-        <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} />
+    <g>
+      <g style={{ cursor: "move" }} onPointerDown={(e) => onPointerDown(e, "floor")}>
+        <rect x={x} y={z} width={w} height={l} fill={sp.floor === mainFloor ? "url(#floor)" : `url(#floor-${sp.floor})`} />
+        <rect x={x} y={z} width={w} height={l} fill={selected ? ACCENT : "#ffffff"} fillOpacity={selected ? 0.08 : 0.35} />
+        <rect x={x} y={z} width={w} height={l} fill="url(#grid)" />
+      </g>
+      {walls.map(({ side, r }) => (
+        <g key={side} className="group" style={{ cursor: isHorizontal(side) ? "ns-resize" : "ew-resize" }} onPointerDown={(e) => onPointerDown(e, side)}>
+          <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={selected ? ACCENT : "#3b3733"} />
+          <rect x={r.x - pad} y={r.y - pad} width={r.w + pad * 2} height={r.h + pad * 2} className="fill-transparent group-hover:fill-[#2f6fed]/30" />
+        </g>
       ))}
+      {showLabel && (
+        <text x={x + w / 2} y={z + l / 2} textAnchor="middle" pointerEvents="none" fill="#2a2622" stroke="#ffffff" strokeOpacity={0.85} strokeWidth={3 * px} paintOrder="stroke">
+          <tspan x={x + w / 2} dy={-2 * px} fontSize={12 * px} fontWeight={600}>
+            {sp.name}
+          </tspan>
+          <tspan x={x + w / 2} dy={14 * px} fontSize={10 * px} fill="#6b645c">
+            {area}
+          </tspan>
+        </text>
+      )}
     </g>
   );
+}
+
+/** How far a plan point lies outside the room, measured straight out through `wall`. */
+function outward(room: Room, wall: WallSide, p: Vec2) {
+  return wall === "north" ? -p.z : wall === "south" ? p.z - room.length : wall === "west" ? -p.x : p.x - room.width;
+}
+
+function isOwnerSelected(o: WallOwner, sel: Selection) {
+  if (o.kind === "wall") return sel?.kind === "wall" && sel.wall === o.wall;
+  return sel?.kind === "alcove" && sel.id === o.id;
+}
+
+/**
+ * The room's walls. Each wall, and each edge of an alcove, is a drag target:
+ * pull a wall to resize the room, or an alcove's edges to resize the alcove.
+ */
+function Walls({
+  room,
+  selection,
+  px,
+  onPointerDown,
+}: {
+  room: Room;
+  selection: Selection;
+  px: number;
+  onPointerDown: (e: React.PointerEvent, owner: WallOwner) => void;
+}) {
+  const rects = wallRects(room);
+  const groups = new Map<string, WallRect[]>();
+  for (const r of rects) groups.set(ownerKey(r.owner), [...(groups.get(ownerKey(r.owner)) ?? []), r]);
+  const pad = 4 * px;
+  const grip = (r: WallRect) => {
+    // A small pill across the middle of the piece, hinting that it can be dragged.
+    const long = Math.max(r.w, r.h);
+    const len = Math.min(long * 0.6, 28 * px);
+    const thick = 3 * px;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    return r.w >= r.h ? (
+      <rect key={`g${r.x},${r.y}`} x={cx - len / 2} y={cy - thick / 2} width={len} height={thick} rx={thick / 2} fill="#ffffff" />
+    ) : (
+      <rect key={`g${r.x},${r.y}`} x={cx - thick / 2} y={cy - len / 2} width={thick} height={len} rx={thick / 2} fill="#ffffff" />
+    );
+  };
+  return (
+    <g>
+      {rects.map((r, i) => (
+        <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} fill={isOwnerSelected(r.owner, selection) ? ACCENT : "#3b3733"} pointerEvents="none" />
+      ))}
+      {[...groups.entries()].map(([key, list]) => {
+        const sel = isOwnerSelected(list[0].owner, selection);
+        return (
+          <g
+            key={key}
+            className="group"
+            style={{ cursor: ownerCursor(list[0].owner, room) }}
+            onPointerDown={(e) => onPointerDown(e, list[0].owner)}
+          >
+            {list.map((r, i) => (
+              <rect
+                key={i}
+                x={r.x - pad}
+                y={r.y - pad}
+                width={r.w + pad * 2}
+                height={r.h + pad * 2}
+                className={sel ? "fill-transparent" : "fill-transparent group-hover:fill-[#2f6fed]/30"}
+              />
+            ))}
+            {/* Only the longest piece of a wall split by alcoves gets a grip. */}
+            {sel && <g pointerEvents="none">{grip(list.reduce((a, b) => (Math.max(b.w, b.h) > Math.max(a.w, a.h) ? b : a)))}</g>}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Length of the selected wall, drawn just inside it. */
+function WallDimension({ room, wall, unit, px }: { room: Room | Space; wall: WallSide; unit: Unit; px: number }) {
+  const f = wallFrame(room, wall);
+  const len = wallLength(room, wall);
+  const v = 24 * px;
+  const at = (u: number) => ({ x: f.start.x + f.dir.x * u + f.inward.x * v, z: f.start.z + f.dir.z * u + f.inward.z * v });
+  return <DimLine from={at(0)} to={at(len)} label={formatLength(len, unit)} px={px} color={ACCENT} />;
 }
 
 /** Window symbol on an alcove's back wall. */
@@ -509,20 +846,21 @@ function AlcoveDimensions({ room, a, unit, px }: { room: Room; a: Alcove; unit: 
   }
 }
 
+type DoorLike = Pick<Opening, "kind" | "offset" | "width" | "hinge"> & { swing?: DoorSwing };
+
 function OpeningSymbol({
-  room,
+  f,
   o,
   px,
   selected,
   onPointerDown,
 }: {
-  room: Room;
-  o: Opening;
+  f: WallFrame;
+  o: DoorLike;
   px: number;
   selected: boolean;
   onPointerDown: (e: React.PointerEvent) => void;
 }) {
-  const f = wallFrame(room, o.wall);
   // Local frame: u along the wall from the start corner, v into the room.
   const angle = (Math.atan2(f.dir.z, f.dir.x) * 180) / Math.PI;
   const flip = f.dir.x * f.inward.z - f.dir.z * f.inward.x < 0 ? -1 : 1;
@@ -535,7 +873,13 @@ function OpeningSymbol({
       style={{ cursor: "ew-resize" }}
     >
       {/* Generous invisible hit area for easier grabbing. */}
-      <rect x={a} y={-WALL - 6} width={o.width} height={WALL + 12 + (o.kind === "door" ? o.width : 0)} fill="transparent" />
+      <rect
+        x={a}
+        y={o.kind === "door" && o.swing === "out" ? -WALL - 6 - o.width : -WALL - 6}
+        width={o.width}
+        height={WALL + 12 + (o.kind === "door" ? o.width : 0)}
+        fill="transparent"
+      />
       <rect x={a} y={-WALL} width={o.width} height={WALL} fill={o.kind === "door" ? "#f4f2ee" : "#dbe9f6"} stroke={stroke} strokeWidth={1.2 * px} />
       {o.kind === "window" ? (
         <>
@@ -547,8 +891,9 @@ function OpeningSymbol({
           const hingeU = o.hinge === "start" ? a : a + o.width;
           const freeU = o.hinge === "start" ? a + o.width : a;
           const sweep = o.hinge === "start" ? 1 : 0;
+          // An outward door is the same drawing mirrored onto the far face of the wall.
           return (
-            <>
+            <g transform={o.swing === "out" ? `translate(0 ${-WALL}) scale(1 -1)` : undefined}>
               <line x1={hingeU} y1={0} x2={hingeU} y2={o.width} stroke={stroke} strokeWidth={2.4 * px} />
               <path
                 d={`M ${freeU} 0 A ${o.width} ${o.width} 0 0 ${sweep} ${hingeU} ${o.width}`}
@@ -558,7 +903,7 @@ function OpeningSymbol({
                 strokeWidth={1 * px}
                 strokeDasharray={`${4 * px} ${3 * px}`}
               />
-            </>
+            </g>
           );
         })()
       )}
