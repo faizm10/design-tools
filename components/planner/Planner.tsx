@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { usePlanner, persist } from "@/lib/store";
 import { viewBridge } from "@/lib/bridge";
 import { catalogEntry } from "@/lib/catalog";
-import { snapPosition } from "@/lib/geometry";
+import { snapPosition, wallPosition } from "@/lib/geometry";
 import { useToast } from "@/lib/toast";
 import { Toolbar } from "./Toolbar";
 import { Catalog, DRAG_MIME } from "./Catalog";
@@ -178,6 +178,7 @@ function useShortcuts() {
           st.deleteSelected();
         }
       } else if (key === "r") st.rotateSelected(e.shiftKey ? -90 : 90);
+      else if (key === "f" && (st.selection?.kind === "opening" || st.selection?.kind === "space")) st.flipDoor(st.selection.id);
       else if (key.startsWith("arrow") && st.selection) {
         e.preventDefault();
         const step = e.shiftKey ? 1 : st.gridSnap ? st.gridSize : 1;
@@ -187,6 +188,16 @@ function useShortcuts() {
         if (sel.kind === "furniture") {
           const it = st.scene.furniture.find((f) => f.id === sel.id);
           if (it) st.updateFurniture(it.id, { x: Math.round((it.x + dx) * 10) / 10, z: Math.round((it.z + dz) * 10) / 10 }, `nudge-${it.id}`);
+        } else if (sel.kind === "wall") {
+          // Arrows push the wall along its normal, e.g. ← moves the west wall out and the east wall in.
+          const d = sel.wall === "north" || sel.wall === "south" ? dz : dx;
+          if (d) st.moveWall(sel.wall, wallPosition(st.scene.room, sel.wall) + d, `nudge-${sel.wall}`);
+        } else if (sel.kind === "space") {
+          const sp = st.scene.room.spaces.find((x) => x.id === sel.id);
+          if (sp) st.updateSpace(sp.id, { x: Math.round((sp.x + dx) * 10) / 10, z: Math.round((sp.z + dz) * 10) / 10 }, `nudge-${sp.id}`);
+        } else if (sel.kind === "alcove") {
+          const a = st.scene.room.alcoves.find((x) => x.id === sel.id);
+          if (a) st.updateAlcove(a.id, { offset: a.offset + (a.wall === "north" || a.wall === "south" ? dx : dz) }, `nudge-${a.id}`);
         } else {
           const o = st.scene.openings.find((x) => x.id === sel.id);
           if (o) st.updateOpening(o.id, { offset: o.offset + (o.wall === "north" || o.wall === "south" ? dx : dz) }, `nudge-${o.id}`);
