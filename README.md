@@ -48,6 +48,7 @@ Identity is [Neon Auth](https://neon.com/docs/auth/overview) (managed Better Aut
 | Move | Drag the item in either view. Hold **Alt** while dragging to turn snapping off |
 | Rotate | **R** / **Shift+R**, the toolbar buttons, the rotation field, or the round handle in 2D (15° steps, hold **Shift** for 1°) |
 | Resize | The square edge handles in 2D, or exact width, depth and height in the properties panel |
+| Wall and ceiling pieces | Shelves, art, mirrors, slat panels, curtains, LED strips and pendants have a **Height off floor** field. Clicking one in the catalogue mounts it on a free stretch of wall (curtains go over a window) |
 | Nudge | Arrow keys (one grid step, or 1 cm with **Shift**) |
 | Duplicate / delete | **⌘/Ctrl+D** / **Delete** |
 | Save to account | **⌘/Ctrl+S** or the Save button |
@@ -57,7 +58,7 @@ Identity is [Neon Auth](https://neon.com/docs/auth/overview) (managed Better Aut
 | Camera (3D) | Left-drag to orbit, right-drag to pan, scroll to zoom, ⤢ to reset |
 | Walls (3D) | Cycle **Auto-hide** (hides walls between you and the room), **Show all**, **Cut away** |
 
-Snapping aligns item edges to the grid (1, 5, 10 or 25 cm), then pulls them flush against walls and nearby furniture. The scene flags items that leave the room, overlap each other, stand taller than the ceiling, or block a door's swing. Rugs never count as overlapping, and table lamps rest on nightstands, desks and dressers.
+Snapping aligns item edges to the grid (1, 5, 10 or 25 cm), then pulls them flush against walls and nearby furniture. The scene flags items that leave the room, overlap each other, stand taller than the ceiling, or block a door's swing. Rugs never count as overlapping, items at different heights (a shelf above a desk) don't collide, and table lamps, TVs, vases and books rest on whatever surface is beneath them.
 
 **Import/export** saves or loads the whole plan as JSON. **Screenshot** downloads a PNG of whichever view is showing.
 

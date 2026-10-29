@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import { RoundedBox } from "@react-three/drei";
 import type { FurnitureType } from "@/lib/types";
+import { ExtraModel } from "./models-extra";
 
 /** Sizes are metres. Models sit on y = 0, centred on their footprint, front facing +z. */
 export interface ModelProps {
@@ -19,17 +20,17 @@ export function tone(hex: string, lightness: number, saturation = 0) {
   return `#${c.getHexString()}`;
 }
 
-const METAL = "#8b8d90";
+export const METAL = "#8b8d90";
 
 /** Small deterministic PRNG so procedural details stay stable between renders. */
-function makeRng(seed: number) {
+export function makeRng(seed: number) {
   let s = seed;
   return () => (s = (s * 9301 + 49297) % 233280) / 233280;
 }
 const DARK_METAL = "#2d2e30";
 const LINEN = "#f4f1eb";
 
-function Box({
+export function Box({
   size,
   position,
   color,
@@ -52,7 +53,7 @@ function Box({
   );
 }
 
-function Soft({
+export function Soft({
   size,
   position,
   color,
@@ -73,7 +74,7 @@ function Soft({
   );
 }
 
-function Legs({ w, d, h, inset = 0.04, size = 0.035, color, round = false }: { w: number; d: number; h: number; inset?: number; size?: number; color: string; round?: boolean }) {
+export function Legs({ w, d, h, inset = 0.04, size = 0.035, color, round = false }: { w: number; d: number; h: number; inset?: number; size?: number; color: string; round?: boolean }) {
   const xs = [-w / 2 + inset, w / 2 - inset];
   const zs = [-d / 2 + inset, d / 2 - inset];
   return (
@@ -493,5 +494,7 @@ export function FurnitureModel({ type, ...p }: ModelProps & { type: FurnitureTyp
       return <Tv {...p} />;
     case "tv-stand":
       return <TvStand {...p} />;
+    default:
+      return <ExtraModel type={type} {...p} />;
   }
 }

@@ -263,7 +263,7 @@ export default function PlanView() {
   // Draw rugs first, then by top height, so a lamp on a nightstand stays visible.
   const sorted = useMemo(() => {
     const elev = surfaceElevations(furniture);
-    const top = (f: FurnitureItem) => (elev.get(f.id) ?? 0) * 10 + f.height;
+    const top = (f: FurnitureItem) => (elev.get(f.id) ?? 0) + f.height;
     return [...furniture].sort((a, b) => Number(isFloorCovering(b.type)) - Number(isFloorCovering(a.type)) || top(a) - top(b));
   }, [furniture]);
   const selectedItem = selection?.kind === "furniture" ? furniture.find((f) => f.id === selection.id) : undefined;

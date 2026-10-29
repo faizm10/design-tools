@@ -2,7 +2,7 @@
 
 import { nanoid } from "nanoid";
 import { AlertTriangle, Copy, DoorOpen, MousePointerClick, Plus, RotateCw, Trash2, AppWindow, ChevronRight } from "lucide-react";
-import { catalogEntry } from "@/lib/catalog";
+import { catalogEntry, isSurfaceItem } from "@/lib/catalog";
 import { usePlanner } from "@/lib/store";
 import { FLOOR_LABELS, FLOOR_SWATCH, floorDataUrl } from "@/lib/textures";
 import { formatDims, formatLength } from "@/lib/units";
@@ -109,6 +109,10 @@ function FurnitureProps({ it }: { it: FurnitureItem }) {
           <LengthField id="pos-z" label="Position Y" unit={unit} value={it.z} min={-1000} max={room.length + 1000} onCommit={(v) => set({ z: v }, `z-${it.id}`)} />
         </FieldRow>
         <p className="-mt-1 text-[11px] text-stone-400">Measured to the item’s centre.</p>
+        <FieldRow label="Height off floor" htmlFor="elev">
+          <LengthField id="elev" label="Height off floor" unit={unit} value={it.elevation ?? 0} min={0} max={room.height} onCommit={(v) => set({ elevation: v }, `el-${it.id}`)} />
+        </FieldRow>
+        {isSurfaceItem(it.type) && !(it.elevation ?? 0) && <p className="-mt-1 text-[11px] text-stone-400">At 0 it rests on the furniture beneath it.</p>}
         <FieldRow label="Rotation" htmlFor="rot">
           <NumberField id="rot" value={it.rotation} suffix="°" step={15} onCommit={(v) => set({ rotation: ((v % 360) + 360) % 360 }, `rot-${it.id}`)} width="w-24" />
         </FieldRow>

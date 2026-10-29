@@ -16,6 +16,7 @@ function item(catalogId: string, x: number, z: number, rotation = 0, patch: Part
     width: c.width,
     depth: c.depth,
     height: c.height,
+    elevation: c.elevation ?? 0,
     color: c.color,
     ...patch,
   };

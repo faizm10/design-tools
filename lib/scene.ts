@@ -68,6 +68,7 @@ export function validateScene(data: unknown): Scene | null {
         width: clamp(num(f.width, c.width), 5, 1000),
         depth: clamp(num(f.depth, c.depth), 5, 1000),
         height: clamp(num(f.height, c.height), 1, 600),
+        elevation: clamp(num(f.elevation, c.elevation ?? 0), 0, 600),
         color: str(f.color, c.color),
       };
     });

@@ -246,11 +246,18 @@ export interface Warning {
   message: string;
 }
 
-/** Elevation of surface items (table lamps) that stand on another item. */
+/**
+ * Base height of every item: its own elevation, or for surface items left on
+ * the floor (lamps, TVs, vases), the top of whatever they stand on.
+ */
 export function surfaceElevations(items: FurnitureItem[]): Map<string, number> {
   const result = new Map<string, number>();
   for (const it of items) {
-    if (!isSurfaceItem(it.type)) continue;
+    const own = it.elevation ?? 0;
+    if (!isSurfaceItem(it.type) || own > 0) {
+      result.set(it.id, own);
+      continue;
+    }
     const fp = footprint(it);
     let elev = 0;
     for (const o of items) {
@@ -258,7 +265,7 @@ export function surfaceElevations(items: FurnitureItem[]): Map<string, number> {
       // Only count it as resting on top when the lamp's centre is over the surface.
       const centre = [{ x: it.x - 0.1, z: it.z - 0.1 }, { x: it.x + 0.1, z: it.z - 0.1 }, { x: it.x + 0.1, z: it.z + 0.1 }];
       if (polygonsOverlap(centre, footprint(o), 0) && polygonsOverlap(fp, footprint(o))) {
-        elev = Math.max(elev, o.height);
+        elev = Math.max(elev, (o.elevation ?? 0) + o.height);
       }
     }
     result.set(it.id, elev);
@@ -291,6 +298,10 @@ export function computeWarnings(room: Room, items: FurnitureItem[], openings: Op
       // A lamp standing on a nightstand is fine.
       if ((elev.get(a.id) ?? 0) > 0 && hasTopSurface(b.type)) continue;
       if ((elev.get(b.id) ?? 0) > 0 && hasTopSurface(a.type)) continue;
+      // Items at different heights (a shelf above a desk) don't collide.
+      const a0 = elev.get(a.id) ?? 0;
+      const b0 = elev.get(b.id) ?? 0;
+      if (a0 + a.height <= b0 + 0.5 || b0 + b.height <= a0 + 0.5) continue;
       if (polygonsOverlap(prints.get(a.id)!, prints.get(b.id)!)) {
         warnings.push({ itemId: a.id, kind: "overlap", message: `${a.name} overlaps ${nameOf(b.id)}` });
         warnings.push({ itemId: b.id, kind: "overlap", message: `${b.name} overlaps ${nameOf(a.id)}` });
@@ -302,7 +313,7 @@ export function computeWarnings(room: Room, items: FurnitureItem[], openings: Op
     if (o.kind !== "door") continue;
     const swing = doorSwingArea(room, o);
     for (const it of items) {
-      if (isFloorCovering(it.type)) continue;
+      if (isFloorCovering(it.type) || (elev.get(it.id) ?? 0) >= o.height) continue;
       if (polygonsOverlap(swing, prints.get(it.id)!)) {
         warnings.push({ itemId: it.id, kind: "door", message: `${it.name} blocks the door swing` });
       }
@@ -334,4 +345,67 @@ export function findFreeSpot(item: FurnitureItem, room: Room, others: FurnitureI
     }
   }
   return best ?? preferred;
+}
+
+const WALL_ROTATION: Record<WallSide, number> = { north: 0, east: 90, south: 180, west: 270 };
+
+/**
+ * Place a wall-mounted item flat against a wall, facing into the room,
+ * clear of doors and windows and of other items at the same height.
+ * Curtains are centred over the first window instead, sized to cover it.
+ */
+export function findWallSpot(
+  item: FurnitureItem,
+  room: Room,
+  others: FurnitureItem[],
+  openings: Opening[],
+): Partial<FurnitureItem> | null {
+  const base = item.elevation ?? 0;
+  const top = base + item.height;
+  const at = (wall: WallSide, u: number, width = item.width): Partial<FurnitureItem> => {
+    const f = wallFrame(room, wall);
+    const v = item.depth / 2;
+    return {
+      x: round1(f.start.x + f.dir.x * u + f.inward.x * v),
+      z: round1(f.start.z + f.dir.z * u + f.inward.z * v),
+      rotation: WALL_ROTATION[wall],
+      width,
+    };
+  };
+
+  if (item.type === "curtain") {
+    const win = openings.find((o) => o.kind === "window");
+    if (win) return at(win.wall, win.offset, Math.min(wallLength(room, win.wall), Math.max(item.width, win.width + 40)));
+  }
+
+  const elev = surfaceElevations(others);
+  for (const wall of ["north", "east", "south", "west"] as WallSide[]) {
+    const len = wallLength(room, wall);
+    if (len < item.width) continue;
+    const blocked = (u: number) => {
+      const a = u - item.width / 2;
+      const b = u + item.width / 2;
+      // Openings in the same height band get in the way (a print can hang above a door, not across it).
+      const hitsOpening = openings.some(
+        (o) => o.wall === wall && a < o.offset + o.width / 2 && b > o.offset - o.width / 2 && base < o.sill + o.height && top > o.sill,
+      );
+      if (hitsOpening) return true;
+      const probe = { ...item, ...at(wall, u) } as FurnitureItem;
+      const fp = footprint(probe);
+      return others.some((o) => {
+        if (isFloorCovering(o.type)) return false;
+        const o0 = elev.get(o.id) ?? 0;
+        if (o0 >= top || o0 + o.height <= base) return false;
+        return polygonsOverlap(fp, footprint(o));
+      });
+    };
+    // Search outward from the middle of the wall.
+    for (let step = 0; step <= len / 2; step += 10) {
+      for (const u of [len / 2 - step, len / 2 + step]) {
+        if (u - item.width / 2 < 0 || u + item.width / 2 > len) continue;
+        if (!blocked(u)) return at(wall, u);
+      }
+    }
+  }
+  return null;
 }

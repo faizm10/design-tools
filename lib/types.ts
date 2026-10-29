@@ -26,7 +26,25 @@ export type FurnitureType =
   | "table-lamp"
   | "plant"
   | "tv"
-  | "tv-stand";
+  | "tv-stand"
+  | "sofa"
+  | "bench"
+  | "pouf"
+  | "side-table"
+  | "floor-mirror"
+  | "wall-mirror"
+  | "wall-shelf"
+  | "wall-panel"
+  | "wall-art"
+  | "clock"
+  | "curtain"
+  | "led-strip"
+  | "neon-sign"
+  | "pendant"
+  | "corner-led"
+  | "vase"
+  | "books"
+  | "basket";
 
 /** A recess that extends the room outward through one wall, e.g. a desk nook or bay. */
 export interface Alcove {
@@ -76,6 +94,8 @@ export interface FurnitureItem {
   width: number;
   depth: number;
   height: number;
+  /** Height of the item's base above the floor; wall and ceiling pieces sit above 0. */
+  elevation?: number;
   color: string;
 }
 

@@ -128,6 +128,112 @@ export function PlanSymbol({ type, w, d, color, px }: Props) {
         </g>
       );
     }
+    case "sofa": {
+      const arm = Math.min(16, w * 0.12);
+      const seats = Math.max(1, Math.round((w - 2 * arm) / 62));
+      const cw = (w - 2 * arm) / seats;
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} rx={10} {...body} />
+          <rect x={-hw + arm} y={-hd + d * 0.24} width={w - 2 * arm} height={d * 0.72} rx={6} fill="#ffffff" fillOpacity={0.3} stroke={INK} strokeWidth={sw * 0.7} />
+          {Array.from({ length: seats - 1 }, (_, i) => (
+            <line key={i} x1={-hw + arm + cw * (i + 1)} x2={-hw + arm + cw * (i + 1)} y1={-hd + d * 0.24} y2={hd - d * 0.04} {...line} strokeWidth={sw * 0.6} />
+          ))}
+        </g>
+      );
+    }
+    case "bench":
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} rx={6} {...body} />
+          <line x1={-hw + 6} x2={hw - 6} y1={0} y2={0} {...line} strokeWidth={sw * 0.5} strokeDasharray={`${3 * px} ${3 * px}`} />
+        </g>
+      );
+    case "pouf":
+    case "side-table":
+    case "basket":
+      return (
+        <g>
+          <ellipse rx={hw} ry={hd} fill={color} stroke={INK} strokeWidth={sw} />
+          <ellipse rx={hw * 0.55} ry={hd * 0.55} fill="none" stroke={INK} strokeWidth={sw * 0.6} strokeOpacity={0.6} />
+        </g>
+      );
+    case "clock":
+    case "wall-mirror":
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} fill={color} stroke={INK} strokeWidth={sw} />
+          <circle cx={0} cy={hd + Math.min(hw, 12)} r={Math.min(hw, 12) * 0.6} fill="none" stroke={INK} strokeWidth={sw * 0.6} strokeDasharray={`${2 * px} ${2 * px}`} />
+        </g>
+      );
+    case "floor-mirror":
+    case "wall-art":
+      return <rect x={-hw} y={-hd} width={w} height={d} fill={type === "floor-mirror" ? "#c7d3dc" : color} stroke={INK} strokeWidth={sw} />;
+    case "wall-shelf":
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} fill={color} fillOpacity={0.85} stroke={INK} strokeWidth={sw} strokeDasharray={`${4 * px} ${2 * px}`} />
+          <rect x={-hw + 4} y={-hd + 3} width={w * 0.4} height={d - 6} fill="#7c3f33" fillOpacity={0.5} />
+        </g>
+      );
+    case "wall-panel": {
+      const n = Math.max(2, Math.floor(w / 4.2));
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} fill="#2a2826" />
+          {Array.from({ length: n }, (_, i) => (
+            <rect key={i} x={-hw + (w / n) * i + 0.4} y={-hd} width={(w / n) * 0.66} height={d} fill={color} />
+          ))}
+        </g>
+      );
+    }
+    case "curtain": {
+      const n = Math.max(4, Math.round(w / 7));
+      const step = w / n;
+      const path = Array.from({ length: n }, (_, i) => `Q ${-hw + step * (i + 0.5)} ${i % 2 ? hd : -hd} ${-hw + step * (i + 1)} 0`).join(" ");
+      return (
+        <g>
+          <line x1={-hw - 4} x2={hw + 4} y1={-hd} y2={-hd} stroke={INK} strokeWidth={sw * 1.4} />
+          <path d={`M ${-hw} 0 ${path}`} fill="none" stroke={color === "#ffffff" ? INK : color} strokeWidth={sw * 2.2} />
+          <path d={`M ${-hw} 0 ${path}`} fill="none" stroke={INK} strokeWidth={sw * 0.5} />
+        </g>
+      );
+    }
+    case "led-strip":
+    case "neon-sign":
+      return (
+        <g>
+          <rect x={-hw - 3 * px} y={-hd - 3 * px} width={w + 6 * px} height={d + 6 * px} rx={3 * px} fill={color} fillOpacity={0.25} />
+          <rect x={-hw} y={-hd} width={w} height={Math.max(d, 2 * px)} rx={1} fill={color} />
+        </g>
+      );
+    case "corner-led":
+    case "pendant": {
+      const r = Math.min(hw, hd);
+      return (
+        <g>
+          <circle r={r * 1.25} fill={type === "corner-led" ? color : "#fff6d8"} fillOpacity={0.25} />
+          <circle r={r} fill={type === "corner-led" ? "#1f1f1f" : color} stroke={INK} strokeWidth={sw} />
+          <circle r={r * 0.35} fill={type === "corner-led" ? color : "#fff6d8"} />
+        </g>
+      );
+    }
+    case "vase":
+      return (
+        <g>
+          <circle r={Math.min(hw, hd)} fill={color} stroke={INK} strokeWidth={sw} />
+          {[0, 1, 2, 3, 4].map((i) => (
+            <circle key={i} cx={Math.cos(i * 1.26) * hw * 0.5} cy={Math.sin(i * 1.26) * hd * 0.5} r={Math.min(hw, hd) * 0.3} fill={["#f2d3d8", "#f7e7a6", "#ffffff"][i % 3]} stroke={INK} strokeWidth={sw * 0.4} />
+          ))}
+        </g>
+      );
+    case "books":
+      return (
+        <g>
+          <rect x={-hw} y={-hd} width={w} height={d} fill={color} stroke={INK} strokeWidth={sw} transform="rotate(-6)" />
+          <rect x={-hw * 0.9} y={-hd * 0.9} width={w * 0.9} height={d * 0.9} fill="#e9e2d0" stroke={INK} strokeWidth={sw * 0.6} transform="rotate(5)" />
+        </g>
+      );
     case "tv": {
       // Thin screen across the back of the footprint, pedestal in front.
       const screenD = Math.min(6, d * 0.3);

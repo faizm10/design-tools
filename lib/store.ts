@@ -5,7 +5,7 @@ import { exampleScene, TEMPLATES } from "./templates";
 import { normalizeAngle, validateScene } from "./scene";
 
 export { normalizeAngle, validateScene };
-import { clampAlcove, clampOpeningOffset, findFreeSpot, round1, wallLength, type Vec2 } from "./geometry";
+import { clampAlcove, clampOpeningOffset, findWallSpot, findFreeSpot, round1, wallLength, type Vec2 } from "./geometry";
 import type {
   FurnitureItem,
   Opening,
@@ -191,10 +191,13 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       width: c.width,
       depth: c.depth,
       height: c.height,
+      elevation: c.ceiling ? Math.max(0, scene.room.height - c.height) : (c.elevation ?? 0),
       color: c.color,
     };
-    const pos = at ?? findFreeSpot(base, scene.room, scene.furniture, { x: scene.room.width / 2, z: scene.room.length / 2 });
-    const item = { ...base, x: round1(pos.x), z: round1(pos.z) };
+    // Wall pieces added with a click go flat against a free wall; dropped ones stay where they land.
+    const onWall = !at && c.wall ? findWallSpot(base, scene.room, scene.furniture, scene.openings) : null;
+    const pos = at ?? onWall ?? findFreeSpot(base, scene.room, scene.furniture, { x: scene.room.width / 2, z: scene.room.length / 2 });
+    const item: FurnitureItem = { ...base, ...onWall, x: round1(pos.x!), z: round1(pos.z!) };
     get().commit((s) => ({ ...s, furniture: [...s.furniture, item] }));
     set({ selection: { kind: "furniture", id } });
     return id;
