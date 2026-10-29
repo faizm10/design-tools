@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { FolderOpen, LogOut, Trash2, Users } from "lucide-react";
 import { useCloud } from "@/lib/cloud";
 import { usePlanner } from "@/lib/store";
 import { formatLength } from "@/lib/units";
@@ -20,7 +20,7 @@ function relativeTime(iso: string) {
 
 export function PlansDialog() {
   const close = useCloud((s) => s.closeDialog);
-  const { listPlans, openPlan, deletePlan } = useCloud.getState();
+  const { listPlans, openPlan, deletePlan, leavePlan } = useCloud.getState();
   const currentId = useCloud((s) => s.planId);
   const unit = usePlanner((s) => s.unit);
   const [plans, setPlans] = useState<PlanSummary[] | null>(null);
@@ -44,7 +44,7 @@ export function PlansDialog() {
     <Modal title="My plans" onClose={close} width="max-w-md">
       <div className="px-6 pt-6 pb-2">
         <h2 className="text-[16px] font-semibold text-stone-900">My plans</h2>
-        <p className="mt-1 text-[12.5px] text-stone-500">Opening a plan replaces the room on screen. You can undo it.</p>
+        <p className="mt-1 text-[12.5px] text-stone-500">Your plans and ones shared with you. Opening a plan replaces the room on screen; you can undo it.</p>
       </div>
       <div className="max-h-[60vh] overflow-y-auto px-3 pb-4">
         {plans === null && !failed && (
@@ -71,6 +71,12 @@ export function PlansDialog() {
                 <span className="flex items-center gap-2">
                   <span className="truncate text-[13.5px] font-medium text-stone-900">{p.name}</span>
                   {p.id === currentId && <span className="shrink-0 rounded-full bg-stone-900 px-1.5 py-px text-[10px] font-medium text-white">Open</span>}
+                  {!p.owned && <span className="shrink-0 rounded-full bg-sky-50 px-1.5 py-px text-[10px] font-medium text-sky-700 ring-1 ring-sky-100">Shared by {p.ownerName}</span>}
+                  {p.owned && p.members > 0 && (
+                    <span className="flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-stone-500" title={`Shared with ${p.members} ${p.members === 1 ? "person" : "people"}`}>
+                      <Users className="size-3" /> {p.members}
+                    </span>
+                  )}
                   {busy === p.id && <span className="size-3 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />}
                 </span>
                 <span className="block text-[11.5px] text-stone-500 tabular-nums">
@@ -85,22 +91,23 @@ export function PlansDialog() {
                   <button
                     type="button"
                     onClick={async () => {
-                      if (await deletePlan(p.id)) setPlans((list) => list?.filter((x) => x.id !== p.id) ?? null);
+                      if (await (p.owned ? deletePlan(p.id) : leavePlan(p.id))) setPlans((list) => list?.filter((x) => x.id !== p.id) ?? null);
                       setConfirming(null);
                     }}
                     className="rounded-md bg-red-600 px-2 py-1 text-[12px] font-medium text-white hover:bg-red-700"
                   >
-                    Delete
+                    {p.owned ? "Delete" : "Leave"}
                   </button>
                 </span>
               ) : (
                 <button
                   type="button"
                   onClick={() => setConfirming(p.id)}
-                  aria-label={`Delete ${p.name}`}
+                  aria-label={p.owned ? `Delete ${p.name}` : `Leave ${p.name}`}
+                  title={p.owned ? "Delete" : "Leave this shared plan"}
                   className="shrink-0 rounded-md p-1.5 text-stone-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus:opacity-100"
                 >
-                  <Trash2 className="size-4" />
+                  {p.owned ? <Trash2 className="size-4" /> : <LogOut className="size-4" />}
                 </button>
               )}
             </li>

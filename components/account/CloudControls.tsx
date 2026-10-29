@@ -8,6 +8,49 @@ import { usePlanner } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { AuthDialog } from "./AuthDialog";
 import { PlansDialog } from "./PlansDialog";
+import { ShareDialog } from "../collab/ShareDialog";
+import { PresenceBar } from "../collab/PresenceBar";
+
+const JOIN_KEY = "bedroom-planner:join";
+
+/**
+ * Handles invite links (/?join=TOKEN): the token is kept for this tab while
+ * the visitor signs in, then accepted and the shared plan opened.
+ */
+function JoinFromLink() {
+  const user = useCloud((s) => s.user);
+  const pending = useCloud((s) => s.sessionPending);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get("join");
+    if (!token) return;
+    try {
+      sessionStorage.setItem(JOIN_KEY, token);
+    } catch {
+      // Without sessionStorage the link only works if already signed in.
+    }
+    url.searchParams.delete("join");
+    window.history.replaceState(null, "", url);
+  }, []);
+  useEffect(() => {
+    if (pending) return;
+    let token: string | null = null;
+    try {
+      token = sessionStorage.getItem(JOIN_KEY);
+    } catch {}
+    if (!token) return;
+    if (!user) {
+      useCloud.getState().openDialog("auth");
+      toast("Sign in or create an account to join the shared plan.");
+      return;
+    }
+    try {
+      sessionStorage.removeItem(JOIN_KEY);
+    } catch {}
+    void useCloud.getState().acceptInvite(token);
+  }, [user, pending]);
+  return null;
+}
 
 /** Mirrors the Neon Auth session into the cloud store. */
 function SessionSync() {
@@ -109,6 +152,8 @@ export function CloudControls() {
   return (
     <>
       <SessionSync />
+      <JoinFromLink />
+      <PresenceBar />
       {!pending && !user && (
         <button type="button" onClick={() => openDialog("auth")} className="hidden h-8 rounded-md px-2.5 text-[12.5px] font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 md:inline-flex md:items-center">
           Sign in
@@ -133,6 +178,7 @@ export function CloudControls() {
       {user && <AccountMenu />}
       {dialog === "auth" && !user && <AuthDialog />}
       {dialog === "plans" && user && <PlansDialog />}
+      {dialog === "share" && user && planId && <ShareDialog />}
     </>
   );
 }
