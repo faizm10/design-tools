@@ -1,13 +1,12 @@
 "use client";
 
-import { nanoid } from "nanoid";
-import { AlertTriangle, Copy, DoorOpen, MousePointerClick, Plus, RotateCw, Trash2, AppWindow, ChevronRight } from "lucide-react";
+import { AlertTriangle, Copy, DoorOpen, MousePointerClick, Plus, RotateCw, Trash2, AppWindow, ChevronRight, BrickWall, SquareDashed, Bath, Shirt, LayoutPanelTop, FlipHorizontal2 } from "lucide-react";
 import { catalogEntry, isSurfaceItem } from "@/lib/catalog";
 import { usePlanner } from "@/lib/store";
 import { FLOOR_LABELS, FLOOR_SWATCH, floorDataUrl } from "@/lib/textures";
 import { formatDims, formatLength } from "@/lib/units";
-import { wallLength } from "@/lib/geometry";
-import type { Alcove, FloorMaterial, FurnitureItem, Opening, WallSide } from "@/lib/types";
+import { MAX_ROOM, MIN_ROOM, MIN_SPACE, wallLength } from "@/lib/geometry";
+import type { Alcove, FloorMaterial, FurnitureItem, Opening, Space, SpaceKind, Unit, WallSide } from "@/lib/types";
 import { ColorField, FieldRow, LengthField, NumberField, Section, Segmented } from "./fields";
 import { Thumbnail } from "./Catalog";
 import { useWarnings } from "./useWarnings";
@@ -21,10 +20,25 @@ export function PropertiesPanel() {
   const openings = usePlanner((s) => s.scene.openings);
   const item = selection?.kind === "furniture" ? furniture.find((f) => f.id === selection.id) : undefined;
   const opening = selection?.kind === "opening" ? openings.find((o) => o.id === selection.id) : undefined;
+  const alcove = usePlanner((s) => (selection?.kind === "alcove" ? s.scene.room.alcoves.find((a) => a.id === selection.id) : undefined));
+  const space = usePlanner((s) => (selection?.kind === "space" ? s.scene.room.spaces.find((sp) => sp.id === selection.id) : undefined));
+  const key = !selection ? "room" : selection.kind === "wall" ? `wall-${selection.wall}` : selection.id;
 
   return (
-    <div key={selection ? selection.id : "room"} className="animate-panel-in h-full overflow-y-auto">
-      {item ? <FurnitureProps it={item} /> : opening ? <OpeningProps o={opening} /> : <RoomProps />}
+    <div key={key} className="animate-panel-in h-full overflow-y-auto">
+      {item ? (
+        <FurnitureProps it={item} />
+      ) : opening ? (
+        <OpeningProps o={opening} />
+      ) : selection?.kind === "wall" ? (
+        <WallProps wall={selection.wall} />
+      ) : alcove ? (
+        <AlcoveProps a={alcove} />
+      ) : space ? (
+        <SpaceProps sp={space} />
+      ) : (
+        <RoomProps />
+      )}
     </div>
   );
 }
@@ -167,6 +181,7 @@ function OpeningProps({ o }: { o: Opening }) {
   const room = usePlanner((s) => s.scene.room);
   const update = usePlanner((s) => s.updateOpening);
   const del = usePlanner((s) => s.deleteSelected);
+  const flipDoor = usePlanner((s) => s.flipDoor);
   const set = (patch: Partial<Opening>, key?: string) => update(o.id, patch, key);
   const len = wallLength(room, o.wall);
   const isDoor = o.kind === "door";
@@ -179,6 +194,7 @@ function OpeningProps({ o }: { o: Opening }) {
         subtitle={`${o.wall[0].toUpperCase()}${o.wall.slice(1)} wall · ${formatLength(o.width, unit)} wide`}
       />
       <div className="flex gap-2 px-4 pt-4">
+        {isDoor && <ActionButton onClick={() => flipDoor(o.id)} icon={<FlipHorizontal2 className="size-4" />} label="Flip swing" shortcut="F" />}
         <ActionButton onClick={del} icon={<Trash2 className="size-4" />} label={`Remove ${isDoor ? "door" : "window"}`} danger shortcut="Del" />
       </div>
       <Section title="Placement">
@@ -188,20 +204,7 @@ function OpeningProps({ o }: { o: Opening }) {
         <FieldRow label={o.wall === "north" || o.wall === "south" ? "From west corner" : "From north corner"} htmlFor="o-off">
           <LengthField id="o-off" label="Offset" unit={unit} value={o.offset - o.width / 2} min={0} max={len - o.width} onCommit={(v) => set({ offset: v + o.width / 2 }, `off-${o.id}`)} />
         </FieldRow>
-        {isDoor && (
-          <FieldRow label="Hinge">
-            <Segmented
-              size="sm"
-              ariaLabel="Hinge side"
-              value={o.hinge}
-              onChange={(hinge) => set({ hinge })}
-              options={[
-                { value: "start", label: o.wall === "north" || o.wall === "south" ? "West" : "North" },
-                { value: "end", label: o.wall === "north" || o.wall === "south" ? "East" : "South" },
-              ]}
-            />
-          </FieldRow>
-        )}
+        {isDoor && <DoorSwingFields wall={o.wall} hinge={o.hinge} swing={o.swing ?? "in"} inLabel="Into room" onChange={set} />}
       </Section>
       <Section title="Size">
         <FieldRow label="Width" htmlFor="o-w">
@@ -217,6 +220,51 @@ function OpeningProps({ o }: { o: Opening }) {
         )}
       </Section>
       <p className="px-4 py-3 text-[12px] text-stone-500">Tip: drag a {isDoor ? "door" : "window"} along the walls in either view — it hops to whichever wall is closest.</p>
+    </>
+  );
+}
+
+/** Hinge side and swing direction, shared by room doors and space doors. */
+function DoorSwingFields({
+  wall,
+  hinge,
+  swing,
+  inLabel,
+  onChange,
+}: {
+  wall: WallSide;
+  hinge: "start" | "end";
+  swing: "in" | "out";
+  inLabel: string;
+  onChange: (patch: { hinge?: "start" | "end"; swing?: "in" | "out" }) => void;
+}) {
+  const along = wall === "north" || wall === "south";
+  return (
+    <>
+      <FieldRow label="Hinge">
+        <Segmented
+          size="sm"
+          ariaLabel="Hinge side"
+          value={hinge}
+          onChange={(h) => onChange({ hinge: h })}
+          options={[
+            { value: "start", label: along ? "West" : "North" },
+            { value: "end", label: along ? "East" : "South" },
+          ]}
+        />
+      </FieldRow>
+      <FieldRow label="Opens">
+        <Segmented
+          size="sm"
+          ariaLabel="Door swing"
+          value={swing}
+          onChange={(v) => onChange({ swing: v })}
+          options={[
+            { value: "in", label: inLabel },
+            { value: "out", label: "Outward" },
+          ]}
+        />
+      </FieldRow>
     </>
   );
 }
@@ -244,17 +292,17 @@ function RoomProps() {
         <div className="mt-3 flex items-start gap-2.5 rounded-lg bg-stone-50 p-3 ring-1 ring-stone-200/70">
           <MousePointerClick className="mt-0.5 size-4 shrink-0 text-stone-400" />
           <p className="text-[12px] leading-relaxed text-stone-600">
-            Select any piece of furniture, door or window to edit it. Drag items from the catalogue to add more.
+            Select any piece of furniture, door, window or wall to edit it. Drag a wall in the 2D plan to resize the room.
           </p>
         </div>
       </div>
 
       <Section title="Room size">
         <FieldRow label="Width (W–E)" htmlFor="r-w">
-          <LengthField id="r-w" label="Room width" unit={unit} value={room.width} min={150} max={2000} onCommit={(v) => updateRoom({ width: v }, "room-w")} />
+          <LengthField id="r-w" label="Room width" unit={unit} value={room.width} min={MIN_ROOM} max={MAX_ROOM} onCommit={(v) => updateRoom({ width: v }, "room-w")} />
         </FieldRow>
         <FieldRow label="Length (N–S)" htmlFor="r-l">
-          <LengthField id="r-l" label="Room length" unit={unit} value={room.length} min={150} max={2000} onCommit={(v) => updateRoom({ length: v }, "room-l")} />
+          <LengthField id="r-l" label="Room length" unit={unit} value={room.length} min={MIN_ROOM} max={MAX_ROOM} onCommit={(v) => updateRoom({ length: v }, "room-l")} />
         </FieldRow>
         <FieldRow label="Ceiling height" htmlFor="r-h">
           <LengthField id="r-h" label="Ceiling height" unit={unit} value={room.height} min={200} max={500} onCommit={(v) => updateRoom({ height: v }, "room-h")} />
@@ -319,6 +367,8 @@ function RoomProps() {
         )}
       </Section>
 
+      <SpacesSection />
+
       <AlcovesSection />
 
       <Section title={`In this room (${furniture.length})`}>
@@ -347,80 +397,397 @@ function RoomProps() {
   );
 }
 
-function AlcovesSection() {
+const SPACE_ICONS: Record<SpaceKind, React.ReactNode> = {
+  bathroom: <Bath className="size-4 text-stone-400" />,
+  closet: <Shirt className="size-4 text-stone-400" />,
+  room: <LayoutPanelTop className="size-4 text-stone-400" />,
+};
+
+function SpacesSection() {
+  const unit = usePlanner((s) => s.unit);
+  const spaces = usePlanner((s) => s.scene.room.spaces);
+  const { addSpace, select } = usePlanner.getState();
+  const add = "flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50";
+  return (
+    <Section
+      title="Rooms"
+      action={
+        <div className="flex gap-1">
+          <button type="button" onClick={() => addSpace("bathroom")} className={add}>
+            <Plus className="size-3" /> Bath
+          </button>
+          <button type="button" onClick={() => addSpace("closet")} className={add}>
+            <Plus className="size-3" /> Closet
+          </button>
+          <button type="button" onClick={() => addSpace("room")} className={add}>
+            <Plus className="size-3" /> Room
+          </button>
+        </div>
+      }
+    >
+      {spaces.length === 0 ? (
+        <p className="text-[12px] text-stone-500">Add a bathroom, walk-in closet or small room. Drag it into place in the 2D plan, inside the room or against it outside.</p>
+      ) : (
+        <ul className="-mx-2 space-y-0.5">
+          {spaces.map((sp) => (
+            <li key={sp.id}>
+              <button
+                type="button"
+                onClick={() => select({ kind: "space", id: sp.id })}
+                className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-stone-700 hover:bg-stone-100"
+              >
+                {SPACE_ICONS[sp.kind]}
+                <span className="flex-1 truncate">{sp.name}</span>
+                <span className="text-[12px] text-stone-400 tabular-nums">
+                  {formatLength(sp.width, unit)} × {formatLength(sp.length, unit)}
+                </span>
+                <ChevronRight className="size-3.5 text-stone-300" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+function SpaceProps({ sp }: { sp: Space }) {
   const unit = usePlanner((s) => s.unit);
   const room = usePlanner((s) => s.scene.room);
-  const updateRoom = usePlanner((s) => s.updateRoom);
-  const set = (id: string, patch: Partial<Alcove>, key?: string) =>
-    updateRoom({ alcoves: room.alcoves.map((a) => (a.id === id ? { ...a, ...patch } : a)) }, key);
-  const add = () => {
-    const wall: WallSide = "south";
-    const len = wallLength(room, wall);
-    const width = Math.min(150, len);
-    updateRoom({ alcoves: [...room.alcoves, { id: nanoid(8), wall, offset: (len - width) / 2, width, depth: 60, window: null }] });
-  };
+  const { updateSpace, deleteSelected, flipDoor } = usePlanner.getState();
+  const set = (patch: Partial<Space>, key?: string) => updateSpace(sp.id, patch, key);
+  const door = sp.door;
+  const setDoor = (patch: Partial<NonNullable<Space["door"]>>, key?: string) => door && set({ door: { ...door, ...patch } }, key);
+  const doorLen = door ? wallLength(sp, door.wall) : 0;
+
+  return (
+    <>
+      <PanelHeader
+        icon={<span className="[&>svg]:size-5 [&>svg]:text-stone-600">{SPACE_ICONS[sp.kind]}</span>}
+        title={
+          <input
+            aria-label="Room name"
+            className="-ml-1 w-full rounded px-1 text-[15px] font-semibold text-stone-900 outline-none hover:bg-stone-100 focus:bg-white focus:ring-2 focus:ring-stone-900/10"
+            value={sp.name}
+            onChange={(e) => set({ name: e.target.value }, `sp-name-${sp.id}`)}
+          />
+        }
+        subtitle={`${formatLength(sp.width, unit)} × ${formatLength(sp.length, unit)} · ${((sp.width * sp.length) / 10000).toFixed(1)} m²`}
+      />
+      <div className="flex gap-2 px-4 pt-4">
+        {door && <ActionButton onClick={() => flipDoor(sp.id)} icon={<FlipHorizontal2 className="size-4" />} label="Flip door" shortcut="F" />}
+        <ActionButton onClick={deleteSelected} icon={<Trash2 className="size-4" />} label="Remove room" danger shortcut="Del" />
+      </div>
+
+      <Section title="Type">
+        <Segmented
+          size="sm"
+          ariaLabel="Room type"
+          value={sp.kind}
+          onChange={(kind) => set({ kind })}
+          options={[
+            { value: "bathroom", label: "Bathroom" },
+            { value: "closet", label: "Closet" },
+            { value: "room", label: "Room" },
+          ]}
+        />
+      </Section>
+
+      <Section title="Position">
+        <FieldRow label="From west wall" htmlFor="sp-x">
+          <LengthField id="sp-x" label="Room position X" unit={unit} value={sp.x} min={-sp.width - 400} max={room.width + 400} onCommit={(v) => set({ x: v }, `sp-x-${sp.id}`)} />
+        </FieldRow>
+        <FieldRow label="From north wall" htmlFor="sp-z">
+          <LengthField id="sp-z" label="Room position Y" unit={unit} value={sp.z} min={-sp.length - 400} max={room.length + 400} onCommit={(v) => set({ z: v }, `sp-z-${sp.id}`)} />
+        </FieldRow>
+        <p className="-mt-1 text-[11px] text-stone-400">Measured to its north-west inside corner. Negative values place it outside the main room.</p>
+      </Section>
+
+      <Section title="Size">
+        <FieldRow label="Width (W–E)" htmlFor="sp-w">
+          <LengthField id="sp-w" label="Room width" unit={unit} value={sp.width} min={MIN_SPACE} max={MAX_ROOM} onCommit={(v) => set({ width: v }, `sp-w-${sp.id}`)} />
+        </FieldRow>
+        <FieldRow label="Length (N–S)" htmlFor="sp-l">
+          <LengthField id="sp-l" label="Room length" unit={unit} value={sp.length} min={MIN_SPACE} max={MAX_ROOM} onCommit={(v) => set({ length: v }, `sp-l-${sp.id}`)} />
+        </FieldRow>
+      </Section>
+
+      <Section
+        title="Door"
+        action={
+          !door && (
+            <button
+              type="button"
+              onClick={() => set({ door: { wall: "south", offset: Math.min(50, sp.width / 2), width: Math.min(70, sp.width - 10), hinge: "start", swing: "in" } })}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
+            >
+              <Plus className="size-3" /> Door
+            </button>
+          )
+        }
+      >
+        {door ? (
+          <>
+            <FieldRow label="Wall">
+              <Segmented size="sm" ariaLabel="Door wall" value={door.wall} onChange={(wall) => setDoor({ wall })} options={WALL_OPTIONS} />
+            </FieldRow>
+            <FieldRow label={door.wall === "north" || door.wall === "south" ? "From west corner" : "From north corner"} htmlFor="sp-d-off">
+              <LengthField
+                id="sp-d-off"
+                label="Door offset"
+                unit={unit}
+                value={door.offset - door.width / 2}
+                min={0}
+                max={doorLen - door.width}
+                onCommit={(v) => setDoor({ offset: v + door.width / 2 }, `sp-d-off-${sp.id}`)}
+              />
+            </FieldRow>
+            <FieldRow label="Width" htmlFor="sp-d-w">
+              <LengthField id="sp-d-w" label="Door width" unit={unit} value={door.width} min={30} max={doorLen} onCommit={(v) => setDoor({ width: v }, `sp-d-w-${sp.id}`)} />
+            </FieldRow>
+            <DoorSwingFields wall={door.wall} hinge={door.hinge} swing={door.swing} inLabel={`Into ${sp.kind === "room" ? "room" : sp.kind}`} onChange={(patch) => setDoor(patch)} />
+            <button type="button" onClick={() => set({ door: null })} className="text-[12px] font-medium text-stone-500 underline-offset-2 hover:text-stone-800 hover:underline">
+              Remove door
+            </button>
+          </>
+        ) : (
+          <p className="text-[12px] text-stone-500">No door. Add one, or use a doorway in the main wall.</p>
+        )}
+      </Section>
+
+      <Section title="Floor">
+        <div className="grid grid-cols-3 gap-2">
+          {FLOORS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => set({ floor: f })}
+              aria-pressed={sp.floor === f}
+              className={`overflow-hidden rounded-lg text-left ring-1 transition ${sp.floor === f ? "ring-2 ring-stone-900" : "ring-stone-200 hover:ring-stone-300"}`}
+            >
+              <div className="h-10 bg-cover" style={{ backgroundImage: `url(${floorDataUrl(f)})`, backgroundColor: FLOOR_SWATCH[f], backgroundSize: "160%" }} />
+              <div className="truncate px-1.5 py-1 text-[11px] font-medium text-stone-700">{FLOOR_LABELS[f]}</div>
+            </button>
+          ))}
+        </div>
+      </Section>
+      <p className="px-4 py-3 text-[12px] text-stone-500">Tip: in the 2D plan, drag the floor to move it, drag a wall to resize it, and drag the door along its walls. Edges snap to the main walls.</p>
+    </>
+  );
+}
+
+function AlcovesSection() {
+  const unit = usePlanner((s) => s.unit);
+  const alcoves = usePlanner((s) => s.scene.room.alcoves);
+  const { addAlcove, select } = usePlanner.getState();
 
   return (
     <Section
       title="Alcoves"
       action={
-        <button type="button" onClick={add} className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50">
+        <button type="button" onClick={() => addAlcove("south")} className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50">
           <Plus className="size-3" /> Alcove
         </button>
       }
     >
-      {room.alcoves.length === 0 ? (
+      {alcoves.length === 0 ? (
         <p className="text-[12px] text-stone-500">Add a recess such as a desk nook or bay that extends the room through a wall.</p>
       ) : (
-        room.alcoves.map((a, i) => {
-          const along = a.wall === "north" || a.wall === "south";
-          return (
-            <div key={a.id} className="space-y-2.5 rounded-lg p-3 ring-1 ring-stone-200/80">
-              <div className="flex items-center justify-between">
-                <span className="text-[12.5px] font-medium text-stone-700">Alcove {room.alcoves.length > 1 ? i + 1 : ""}</span>
-                <button
-                  type="button"
-                  onClick={() => updateRoom({ alcoves: room.alcoves.filter((x) => x.id !== a.id) })}
-                  aria-label="Remove alcove"
-                  className="rounded p-1 text-stone-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
-              <FieldRow label="Wall">
-                <Segmented size="sm" ariaLabel="Alcove wall" value={a.wall} onChange={(wall) => set(a.id, { wall })} options={WALL_OPTIONS} />
-              </FieldRow>
-              <FieldRow label={along ? "From west corner" : "From north corner"}>
-                <LengthField label="Alcove offset" unit={unit} value={a.offset} min={0} max={wallLength(room, a.wall)} onCommit={(v) => set(a.id, { offset: v }, `al-off-${a.id}`)} />
-              </FieldRow>
-              <FieldRow label="Width">
-                <LengthField label="Alcove width" unit={unit} value={a.width} min={30} max={wallLength(room, a.wall)} onCommit={(v) => set(a.id, { width: v }, `al-w-${a.id}`)} />
-              </FieldRow>
-              <FieldRow label="Depth">
-                <LengthField label="Alcove depth" unit={unit} value={a.depth} min={10} max={400} onCommit={(v) => set(a.id, { depth: v }, `al-d-${a.id}`)} />
-              </FieldRow>
-              <FieldRow label="Back window">
-                {a.window ? (
-                  <LengthField label="Alcove window width" unit={unit} value={a.window.width} min={20} max={a.width} onCommit={(v) => set(a.id, { window: { ...a.window!, width: v } }, `al-win-${a.id}`)} />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => set(a.id, { window: { width: Math.min(80, a.width), height: 120, sill: 90 } })}
-                    className="flex h-8 items-center gap-1 rounded-md px-2 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
-                  >
-                    <Plus className="size-3" /> Add window
-                  </button>
-                )}
-              </FieldRow>
-              {a.window && (
-                <button type="button" onClick={() => set(a.id, { window: null })} className="text-[12px] font-medium text-stone-500 underline-offset-2 hover:text-stone-800 hover:underline">
-                  Remove window
-                </button>
-              )}
-            </div>
-          );
-        })
+        <AlcoveList alcoves={alcoves} unit={unit} onSelect={(id) => select({ kind: "alcove", id })} />
       )}
     </Section>
+  );
+}
+
+function AlcoveList({ alcoves, unit, onSelect }: { alcoves: Alcove[]; unit: Unit; onSelect: (id: string) => void }) {
+  return (
+    <ul className="-mx-2 space-y-0.5">
+      {alcoves.map((a) => (
+        <li key={a.id}>
+          <button
+            type="button"
+            onClick={() => onSelect(a.id)}
+            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-stone-700 hover:bg-stone-100"
+          >
+            <SquareDashed className="size-4 text-stone-400" />
+            <span className="flex-1">
+              Alcove <span className="text-stone-400">· {a.wall}</span>
+            </span>
+            <span className="text-[12px] text-stone-400 tabular-nums">
+              {formatLength(a.width, unit)} × {formatLength(a.depth, unit)}
+            </span>
+            <ChevronRight className="size-3.5 text-stone-300" />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const wallName = (w: WallSide) => `${w[0].toUpperCase()}${w.slice(1)}`;
+
+function WallProps({ wall }: { wall: WallSide }) {
+  const unit = usePlanner((s) => s.unit);
+  const room = usePlanner((s) => s.scene.room);
+  const openings = usePlanner((s) => s.scene.openings);
+  const { updateRoom, addOpening, addAlcove, select } = usePlanner.getState();
+  const along = wall === "north" || wall === "south";
+  const len = wallLength(room, wall);
+  const onWall = openings.filter((o) => o.wall === wall);
+  const alcoves = room.alcoves.filter((a) => a.wall === wall);
+  const add = "flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50";
+
+  return (
+    <>
+      <PanelHeader
+        icon={<BrickWall className="size-5 text-stone-600" />}
+        title={<h2 className="text-[15px] font-semibold text-stone-900">{wallName(wall)} wall</h2>}
+        subtitle={`${formatLength(len, unit)} long · ${formatLength(room.height, unit)} high`}
+      />
+      <div className="mx-4 mt-4 flex items-start gap-2.5 rounded-lg bg-stone-50 p-3 ring-1 ring-stone-200/70">
+        <MousePointerClick className="mt-0.5 size-4 shrink-0 text-stone-400" />
+        <p className="text-[12px] leading-relaxed text-stone-600">
+          Drag this wall in the 2D plan, or use the {along ? "↑ ↓" : "← →"} arrow keys, to move it. Furniture stays where it is.
+        </p>
+      </div>
+
+      <Section title="Size">
+        <FieldRow label="Length" htmlFor="wall-len">
+          <LengthField
+            id="wall-len"
+            label={`${wallName(wall)} wall length`}
+            unit={unit}
+            value={len}
+            min={MIN_ROOM}
+            max={MAX_ROOM}
+            onCommit={(v) => updateRoom(along ? { width: v } : { length: v }, along ? "room-w" : "room-l")}
+          />
+        </FieldRow>
+        <p className="-mt-1 text-[11px] text-stone-400">Changing the length moves the {along ? "east" : "south"} wall.</p>
+        <FieldRow label="Height" htmlFor="wall-h">
+          <LengthField id="wall-h" label="Ceiling height" unit={unit} value={room.height} min={200} max={500} onCommit={(v) => updateRoom({ height: v }, "room-h")} />
+        </FieldRow>
+      </Section>
+
+      <Section title="Colour">
+        <ColorField label="Wall colour" value={room.wallColor} swatches={WALL_COLORS} onChange={(c, live) => updateRoom({ wallColor: c }, live ? "wall-color" : undefined)} />
+        <p className="text-[11px] text-stone-400">Applies to every wall in the room.</p>
+      </Section>
+
+      <Section
+        title="On this wall"
+        action={
+          <div className="flex gap-1">
+            <button type="button" onClick={() => addOpening("door", wall)} className={add}>
+              <Plus className="size-3" /> Door
+            </button>
+            <button type="button" onClick={() => addOpening("window", wall)} className={add}>
+              <Plus className="size-3" /> Window
+            </button>
+            <button type="button" onClick={() => addAlcove(wall)} className={add}>
+              <Plus className="size-3" /> Alcove
+            </button>
+          </div>
+        }
+      >
+        {onWall.length === 0 && alcoves.length === 0 ? (
+          <p className="text-[12px] text-stone-500">Nothing on this wall yet.</p>
+        ) : (
+          <>
+            {onWall.length > 0 && (
+              <ul className="-mx-2 space-y-0.5">
+                {onWall.map((o) => (
+                  <li key={o.id}>
+                    <button
+                      type="button"
+                      onClick={() => select({ kind: "opening", id: o.id })}
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-stone-700 hover:bg-stone-100"
+                    >
+                      {o.kind === "door" ? <DoorOpen className="size-4 text-stone-400" /> : <AppWindow className="size-4 text-stone-400" />}
+                      <span className="flex-1">{o.kind === "door" ? "Door" : "Window"}</span>
+                      <span className="text-[12px] text-stone-400 tabular-nums">{formatLength(o.width, unit)}</span>
+                      <ChevronRight className="size-3.5 text-stone-300" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {alcoves.length > 0 && <AlcoveList alcoves={alcoves} unit={unit} onSelect={(id) => select({ kind: "alcove", id })} />}
+          </>
+        )}
+      </Section>
+    </>
+  );
+}
+
+function AlcoveProps({ a }: { a: Alcove }) {
+  const unit = usePlanner((s) => s.unit);
+  const room = usePlanner((s) => s.scene.room);
+  const { updateAlcove, deleteSelected } = usePlanner.getState();
+  const set = (patch: Partial<Alcove>, key?: string) => updateAlcove(a.id, patch, key);
+  const along = a.wall === "north" || a.wall === "south";
+  const len = wallLength(room, a.wall);
+
+  return (
+    <>
+      <PanelHeader
+        icon={<SquareDashed className="size-5 text-stone-600" />}
+        title={<h2 className="text-[15px] font-semibold text-stone-900">Alcove</h2>}
+        subtitle={`${wallName(a.wall)} wall · ${formatLength(a.width, unit)} × ${formatLength(a.depth, unit)}`}
+      />
+      <div className="flex gap-2 px-4 pt-4">
+        <ActionButton onClick={deleteSelected} icon={<Trash2 className="size-4" />} label="Remove alcove" danger shortcut="Del" />
+      </div>
+      <Section title="Placement">
+        <FieldRow label="Wall">
+          <Segmented size="sm" ariaLabel="Alcove wall" value={a.wall} onChange={(wall) => set({ wall })} options={WALL_OPTIONS} />
+        </FieldRow>
+        <FieldRow label={along ? "From west corner" : "From north corner"} htmlFor="al-off">
+          <LengthField id="al-off" label="Alcove offset" unit={unit} value={a.offset} min={0} max={len - a.width} onCommit={(v) => set({ offset: v }, `al-off-${a.id}`)} />
+        </FieldRow>
+      </Section>
+      <Section title="Size">
+        <FieldRow label="Width" htmlFor="al-w">
+          <LengthField id="al-w" label="Alcove width" unit={unit} value={a.width} min={30} max={len} onCommit={(v) => set({ width: v }, `al-w-${a.id}`)} />
+        </FieldRow>
+        <FieldRow label="Depth" htmlFor="al-d">
+          <LengthField id="al-d" label="Alcove depth" unit={unit} value={a.depth} min={10} max={400} onCommit={(v) => set({ depth: v }, `al-d-${a.id}`)} />
+        </FieldRow>
+      </Section>
+      <Section
+        title="Back window"
+        action={
+          !a.window && (
+            <button
+              type="button"
+              onClick={() => set({ window: { width: Math.min(80, a.width), height: 120, sill: 90 } })}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
+            >
+              <Plus className="size-3" /> Window
+            </button>
+          )
+        }
+      >
+        {a.window ? (
+          <>
+            <FieldRow label="Width" htmlFor="al-win-w">
+              <LengthField id="al-win-w" label="Alcove window width" unit={unit} value={a.window.width} min={20} max={a.width} onCommit={(v) => set({ window: { ...a.window!, width: v } }, `al-win-w-${a.id}`)} />
+            </FieldRow>
+            <FieldRow label="Height" htmlFor="al-win-h">
+              <LengthField id="al-win-h" label="Alcove window height" unit={unit} value={a.window.height} min={20} max={room.height} onCommit={(v) => set({ window: { ...a.window!, height: v } }, `al-win-h-${a.id}`)} />
+            </FieldRow>
+            <FieldRow label="Sill height" htmlFor="al-win-s">
+              <LengthField id="al-win-s" label="Alcove window sill height" unit={unit} value={a.window.sill} min={0} max={room.height - 20} onCommit={(v) => set({ window: { ...a.window!, sill: v } }, `al-win-s-${a.id}`)} />
+            </FieldRow>
+            <button type="button" onClick={() => set({ window: null })} className="text-[12px] font-medium text-stone-500 underline-offset-2 hover:text-stone-800 hover:underline">
+              Remove window
+            </button>
+          </>
+        ) : (
+          <p className="text-[12px] text-stone-500">No window in the back wall.</p>
+        )}
+      </Section>
+      <p className="px-4 py-3 text-[12px] text-stone-500">Tip: drag the alcove’s side or back walls in the 2D plan to resize it, or use the arrow keys to slide it along the wall.</p>
+    </>
   );
 }
