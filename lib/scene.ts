@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { catalogEntry } from "./catalog";
-import type { Alcove, FurnitureItem, Opening, Room, Scene, WallSide } from "./types";
+import type { Alcove, FloorMaterial, FurnitureItem, Opening, Room, Scene, Space, WallSide } from "./types";
 
 // Shared by the browser store and the API routes, so it must not touch browser APIs.
 
@@ -23,8 +23,9 @@ export function validateScene(data: unknown): Scene | null {
     length: clamp(num(room.length, 420), 100, 2000),
     height: clamp(num(room.height, 250), 180, 600),
     wallColor: str(room.wallColor, "#ece8e1"),
-    floor: (["oak", "walnut", "ash", "tile", "carpet", "concrete"].includes(room.floor as string) ? room.floor : "oak") as Room["floor"],
+    floor: floorOr(room.floor, "oak"),
     alcoves: [],
+    spaces: [],
   };
   const walls = ["north", "east", "south", "west"];
   r.alcoves = (Array.isArray(room.alcoves) ? room.alcoves : [])
@@ -41,6 +42,33 @@ export function validateScene(data: unknown): Scene | null {
         window: w && typeof w === "object" ? { width: clamp(num(w.width, 80), 20, 2000), height: clamp(num(w.height, 120), 20, 600), sill: clamp(num(w.sill, 90), 0, 600) } : null,
       };
     });
+  r.spaces = (Array.isArray(room.spaces) ? room.spaces : [])
+    .filter((sp): sp is Record<string, unknown> => !!sp && typeof sp === "object")
+    .slice(0, 12)
+    .map((sp): Space => {
+      const kind = (["bathroom", "closet", "room"].includes(sp.kind as string) ? sp.kind : "room") as Space["kind"];
+      const door = sp.door as Record<string, unknown> | null | undefined;
+      return {
+        id: str(sp.id, nanoid(8)),
+        name: str(sp.name, "Room"),
+        kind,
+        x: clamp(num(sp.x, 0), -2000, 4000),
+        z: clamp(num(sp.z, 0), -2000, 4000),
+        width: clamp(num(sp.width, 150), 60, 2000),
+        length: clamp(num(sp.length, 150), 60, 2000),
+        floor: floorOr(sp.floor, kind === "bathroom" ? "tile" : r.floor),
+        door:
+          door && typeof door === "object" && walls.includes(door.wall as string)
+            ? {
+                wall: door.wall as WallSide,
+                offset: num(door.offset, 50),
+                width: clamp(num(door.width, 70), 30, 2000),
+                hinge: door.hinge === "end" ? "end" : "start",
+                swing: door.swing === "out" ? "out" : "in",
+              }
+            : null,
+      };
+    });
   const openings: Opening[] = (Array.isArray(d.openings) ? d.openings : [])
     .filter((o): o is Record<string, unknown> => !!o && typeof o === "object" && walls.includes((o as Opening).wall))
     .map((o) => ({
@@ -52,6 +80,7 @@ export function validateScene(data: unknown): Scene | null {
       height: num(o.height, 200),
       sill: num(o.sill, 0),
       hinge: o.hinge === "end" ? "end" : "start",
+      swing: o.swing === "out" ? "out" : "in",
     }));
   const furniture: FurnitureItem[] = (Array.isArray(d.furniture) ? d.furniture : [])
     .filter((f): f is Record<string, unknown> => !!f && typeof f === "object" && !!catalogEntry(str((f as FurnitureItem).catalogId, "")))
@@ -76,3 +105,6 @@ export function validateScene(data: unknown): Scene | null {
 }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+const FLOORS: FloorMaterial[] = ["oak", "walnut", "ash", "tile", "carpet", "concrete"];
+const floorOr = (v: unknown, fallback: FloorMaterial): FloorMaterial => (FLOORS.includes(v as FloorMaterial) ? (v as FloorMaterial) : fallback);
