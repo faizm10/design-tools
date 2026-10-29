@@ -58,6 +58,29 @@ export interface Alcove {
   window: { width: number; height: number; sill: number } | null;
 }
 
+export type SpaceKind = "bathroom" | "closet" | "room";
+
+/** Which way a door leaf opens: "in" swings into the room the door belongs to. */
+export type DoorSwing = "in" | "out";
+
+/**
+ * A smaller room with its own partition walls, such as an ensuite bathroom or
+ * walk-in closet. It can sit inside the main room or against it outside.
+ */
+export interface Space {
+  id: string;
+  name: string;
+  kind: SpaceKind;
+  /** North-west inner corner in plan coordinates. */
+  x: number;
+  z: number;
+  width: number; // x extent
+  length: number; // z extent
+  floor: FloorMaterial;
+  /** Door in one of its walls; `offset` is to the door's centre from that wall's start corner. */
+  door: { wall: WallSide; offset: number; width: number; hinge: "start" | "end"; swing: DoorSwing } | null;
+}
+
 export interface Room {
   name: string;
   width: number; // x extent
@@ -66,6 +89,7 @@ export interface Room {
   wallColor: string;
   floor: FloorMaterial;
   alcoves: Alcove[];
+  spaces: Space[];
 }
 
 export interface Opening {
@@ -80,6 +104,8 @@ export interface Opening {
   sill: number;
   /** Doors only: which end of the opening the hinge sits at. */
   hinge: "start" | "end";
+  /** Doors only: whether the leaf swings into the room or out of it. Defaults to "in". */
+  swing?: DoorSwing;
 }
 
 export interface FurnitureItem {
@@ -109,6 +135,9 @@ export interface Scene {
 export type Selection =
   | { kind: "furniture"; id: string }
   | { kind: "opening"; id: string }
+  | { kind: "wall"; wall: WallSide }
+  | { kind: "alcove"; id: string }
+  | { kind: "space"; id: string }
   | null;
 
 export type ViewMode = "2d" | "3d";
