@@ -9,7 +9,7 @@ import { usePlanner } from "@/lib/store";
 import { viewBridge } from "@/lib/bridge";
 import { clampOpeningOffset, footprint, nearestWall, round1, snapPosition, surfaceElevations, wallLength, type Vec2 } from "@/lib/geometry";
 import { formatDims } from "@/lib/units";
-import type { FurnitureItem, Opening, Room } from "@/lib/types";
+import type { FurnitureItem, Opening, Room, Space } from "@/lib/types";
 import { FurnitureModel } from "./models";
 import { Floor, Walls, useHiddenWalls } from "./Room3D";
 import { useWarnings } from "../planner/useWarnings";
@@ -261,6 +261,18 @@ function SceneContents() {
     if (e.delta < 5) usePlanner.getState().select(null);
   }, []);
 
+  // Spaces are moved and resized in 2D; in 3D a click just selects one.
+  const onSpaceClick = useCallback((e: ThreeEvent<MouseEvent>, sp: Space) => {
+    if (e.delta >= 5) return;
+    e.stopPropagation();
+    usePlanner.getState().select({ kind: "space", id: sp.id });
+  }, []);
+  const onSpaceDown = useCallback((e: ThreeEvent<PointerEvent>, sp: Space) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    usePlanner.getState().select({ kind: "space", id: sp.id });
+  }, []);
+
   const selectedId = selection?.kind === "furniture" ? selection.id : undefined;
   const selected = furniture.find((f) => f.id === selectedId);
   const maxDim = Math.max(room.width, room.length) / 100;
@@ -268,8 +280,16 @@ function SceneContents() {
   return (
     <>
       <Lights room={room} />
-      <Floor room={room} onClick={onFloorClick} />
-      <Walls room={room} openings={openings} hidden={hidden} selectedOpening={selection?.kind === "opening" ? selection.id : undefined} onOpeningDown={onOpeningDown} />
+      <Floor room={room} onClick={onFloorClick} onSpaceClick={onSpaceClick} />
+      <Walls
+        room={room}
+        openings={openings}
+        hidden={hidden}
+        selectedOpening={selection?.kind === "opening" ? selection.id : undefined}
+        selectedSpace={selection?.kind === "space" ? selection.id : undefined}
+        onOpeningDown={onOpeningDown}
+        onSpaceDown={onSpaceDown}
+      />
       {furniture.map((it) => (
         <Furniture key={it.id} it={it} room={room} elevation={elevations.get(it.id) ?? 0} onDown={onItemDown} />
       ))}
