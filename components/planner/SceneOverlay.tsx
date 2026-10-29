@@ -19,6 +19,7 @@ import {
   Scan,
   Sofa,
   Trash2,
+  FlipHorizontal2,
 } from "lucide-react";
 import { usePlanner } from "@/lib/store";
 import { viewBridge } from "@/lib/bridge";
@@ -76,10 +77,22 @@ export function SceneOverlay() {
   const selection = usePlanner((s) => s.selection);
   const dragging = usePlanner((s) => s.dragging);
   const furnitureCount = usePlanner((s) => s.scene.furniture.length);
-  const selectedName = usePlanner((s) =>
-    s.selection?.kind === "furniture" ? s.scene.furniture.find((f) => f.id === s.selection!.id)?.name : s.selection?.kind === "opening" ? (s.scene.openings.find((o) => o.id === s.selection!.id)?.kind === "door" ? "Door" : "Window") : undefined,
-  );
-  const { setPref, rotateSelected, duplicateSelected, deleteSelected, select, loadTemplate } = usePlanner.getState();
+  const selectedName = usePlanner((s) => {
+    const sel = s.selection;
+    if (sel?.kind === "furniture") return s.scene.furniture.find((f) => f.id === sel.id)?.name;
+    if (sel?.kind === "opening") return s.scene.openings.find((o) => o.id === sel.id)?.kind === "door" ? "Door" : "Window";
+    if (sel?.kind === "wall") return `${sel.wall[0].toUpperCase()}${sel.wall.slice(1)} wall`;
+    if (sel?.kind === "alcove") return "Alcove";
+    if (sel?.kind === "space") return s.scene.room.spaces.find((sp) => sp.id === sel.id)?.name;
+    return undefined;
+  });
+  const doorId = usePlanner((s) => {
+    const sel = s.selection;
+    if (sel?.kind === "opening") return s.scene.openings.find((o) => o.id === sel.id && o.kind === "door") ? sel.id : undefined;
+    if (sel?.kind === "space") return s.scene.room.spaces.find((sp) => sp.id === sel.id)?.door ? sel.id : undefined;
+    return undefined;
+  });
+  const { flipDoor, setPref, rotateSelected, duplicateSelected, deleteSelected, select, loadTemplate } = usePlanner.getState();
   const { list } = useWarnings();
   const [showIssues, setShowIssues] = useState(false);
   const wm = WALL_MODES.find((m) => m.value === wallMode)!;
@@ -134,9 +147,19 @@ export function SceneOverlay() {
                 </Btn>
               </>
             )}
-            <Btn onClick={deleteSelected} label="Delete (Del)">
-              <Trash2 className="size-4 text-red-600" />
-            </Btn>
+            {doorId && (
+              <>
+                <div className="mx-0.5 h-5 w-px bg-stone-200" />
+                <Btn onClick={() => flipDoor(doorId)} label="Flip door swing (F)">
+                  <FlipHorizontal2 className="size-4" />
+                </Btn>
+              </>
+            )}
+            {selection.kind !== "wall" && (
+              <Btn onClick={deleteSelected} label="Delete (Del)">
+                <Trash2 className="size-4 text-red-600" />
+              </Btn>
+            )}
           </Pill>
         </div>
       )}
