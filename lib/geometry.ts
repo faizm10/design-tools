@@ -1,5 +1,5 @@
 import { isFloorCovering, isSurfaceItem, hasTopSurface } from "./catalog";
-import type { Alcove, FurnitureItem, Opening, Room, WallSide } from "./types";
+import type { Alcove, DoorSwing, FurnitureItem, Opening, Room, Scene, Space, WallSide } from "./types";
 
 export type Vec2 = { x: number; z: number };
 
@@ -64,24 +64,36 @@ export function polygonsOverlap(a: Vec2[], b: Vec2[], tolerance = 0.5): boolean 
   return true;
 }
 
-export function wallLength(room: Room, wall: WallSide) {
+/** Anything with a rectangular floor: the main room (at the origin) or a space. */
+type Box = { x?: number; z?: number; width: number; length: number };
+
+export function wallLength(room: Box, wall: WallSide) {
   return wall === "north" || wall === "south" ? room.width : room.length;
+}
+
+export interface WallFrame {
+  start: Vec2;
+  dir: Vec2;
+  inward: Vec2;
 }
 
 /**
  * Wall frame: `start` is the corner the offset is measured from, `dir` runs
- * along the wall and `inward` points into the room.
+ * along the wall and `inward` points into the room. Works for the main room
+ * and for spaces, whose north-west corner is at (x, z).
  */
-export function wallFrame(room: Room, wall: WallSide) {
+export function wallFrame(room: Box, wall: WallSide): WallFrame {
+  const x = room.x ?? 0;
+  const z = room.z ?? 0;
   switch (wall) {
     case "north":
-      return { start: { x: 0, z: 0 }, dir: { x: 1, z: 0 }, inward: { x: 0, z: 1 } };
+      return { start: { x, z }, dir: { x: 1, z: 0 }, inward: { x: 0, z: 1 } };
     case "south":
-      return { start: { x: 0, z: room.length }, dir: { x: 1, z: 0 }, inward: { x: 0, z: -1 } };
+      return { start: { x, z: z + room.length }, dir: { x: 1, z: 0 }, inward: { x: 0, z: -1 } };
     case "west":
-      return { start: { x: 0, z: 0 }, dir: { x: 0, z: 1 }, inward: { x: 1, z: 0 } };
+      return { start: { x, z }, dir: { x: 0, z: 1 }, inward: { x: 1, z: 0 } };
     case "east":
-      return { start: { x: room.width, z: 0 }, dir: { x: 0, z: 1 }, inward: { x: -1, z: 0 } };
+      return { start: { x: x + room.width, z }, dir: { x: 0, z: 1 }, inward: { x: -1, z: 0 } };
   }
 }
 
@@ -91,6 +103,58 @@ export function clampOpeningOffset(room: Room, o: Pick<Opening, "wall" | "width"
   const max = len - o.width / 2;
   if (max < min) return len / 2;
   return Math.min(max, Math.max(min, offset));
+}
+
+export const MIN_ROOM = 150;
+export const MAX_ROOM = 2000;
+
+/** Swap in a new room, pulling alcoves and openings back onto their walls if it shrank. */
+export function withRoom(scene: Scene, next: Room): Scene {
+  const room = { ...next, alcoves: next.alcoves.map((a) => clampAlcove(next, a)) };
+  const openings = scene.openings.map((o) => {
+    const width = Math.min(o.width, wallLength(room, o.wall));
+    const height = Math.min(o.height, room.height - o.sill);
+    return { ...o, width, height, offset: clampOpeningOffset(room, { ...o, width }, o.offset) };
+  });
+  return { ...scene, room, openings };
+}
+
+/** Plan coordinate of a wall's inner face: x for west/east, z for north/south. */
+export function wallPosition(room: Room, wall: WallSide) {
+  return wall === "east" ? room.width : wall === "south" ? room.length : 0;
+}
+
+/**
+ * Move one of the room's walls so its inner face sits at plan coordinate `pos`
+ * (x for west/east, z for north/south). The plan origin is the north-west
+ * corner, so moving the west or north wall re-bases the plan: furniture,
+ * openings and alcoves are shifted so they stay put relative to the other walls.
+ * Returns the new scene and how far the origin moved.
+ */
+export function moveWall(scene: Scene, wall: WallSide, pos: number): { scene: Scene; shift: Vec2 } {
+  const { room } = scene;
+  const clampSize = (v: number) => round1(Math.min(MAX_ROOM, Math.max(MIN_ROOM, v)));
+  if (wall === "east") return { scene: withRoom(scene, { ...room, width: clampSize(pos) }), shift: { x: 0, z: 0 } };
+  if (wall === "south") return { scene: withRoom(scene, { ...room, length: clampSize(pos) }), shift: { x: 0, z: 0 } };
+
+  const horizontal = wall === "west"; // the west wall moves along x
+  const size = clampSize((horizontal ? room.width : room.length) - pos);
+  const d = round1((horizontal ? room.width : room.length) - size);
+  if (d === 0) return { scene, shift: { x: 0, z: 0 } };
+  // Openings and alcoves on the walls running across the moved one are measured from it.
+  const across = (w: WallSide) => (horizontal ? w === "north" || w === "south" : w === "west" || w === "east");
+  const shifted: Scene = {
+    ...scene,
+    furniture: scene.furniture.map((f) => (horizontal ? { ...f, x: round1(f.x - d) } : { ...f, z: round1(f.z - d) })),
+    openings: scene.openings.map((o) => (across(o.wall) ? { ...o, offset: round1(o.offset - d) } : o)),
+  };
+  const next: Room = {
+    ...room,
+    ...(horizontal ? { width: size } : { length: size }),
+    alcoves: room.alcoves.map((a) => (across(a.wall) ? { ...a, offset: round1(a.offset - d) } : a)),
+    spaces: room.spaces.map((sp) => (horizontal ? { ...sp, x: round1(sp.x - d) } : { ...sp, z: round1(sp.z - d) })),
+  };
+  return { scene: withRoom(shifted, next), shift: horizontal ? { x: d, z: 0 } : { x: 0, z: d } };
 }
 
 export interface Rect {
@@ -131,10 +195,32 @@ export function clampAlcove(room: Room, a: Alcove): Alcove {
 
 const inRect = (p: Vec2, r: Rect, tol: number) => p.x >= r.minX - tol && p.x <= r.maxX + tol && p.z >= r.minZ - tol && p.z <= r.maxZ + tol;
 
-/** Whether a plan point lies on the room's floor, including alcoves. */
+export function spaceRect(sp: Space): Rect {
+  return { minX: sp.x, maxX: sp.x + sp.width, minZ: sp.z, maxZ: sp.z + sp.length };
+}
+
+/** Whether a plan point lies on the room's floor, including alcoves and spaces built onto it. */
 export function insideRoom(room: Room, p: Vec2, tol = 0.5): boolean {
   if (inRect(p, { minX: 0, maxX: room.width, minZ: 0, maxZ: room.length }, tol)) return true;
+  if (room.spaces.some((sp) => inRect(p, spaceRect(sp), tol))) return true;
   return room.alcoves.some((a) => inRect(p, alcoveRect(room, a), tol));
+}
+
+export const MIN_SPACE = 60;
+
+export function clampSpace(room: Room, sp: Space): Space {
+  const width = Math.max(MIN_SPACE, Math.min(sp.width, MAX_ROOM));
+  const length = Math.max(MIN_SPACE, Math.min(sp.length, MAX_ROOM));
+  // Keep the space touching or overlapping the main room so it can't get lost off-screen.
+  const x = Math.max(-width - 400, Math.min(sp.x, room.width + 400));
+  const z = Math.max(-length - 400, Math.min(sp.z, room.length + 400));
+  const next = { ...sp, width, length, x, z };
+  if (next.door) {
+    const len = wallLength(next, next.door.wall);
+    const w = Math.max(30, Math.min(next.door.width, len));
+    next.door = { ...next.door, width: w, offset: Math.min(len - w / 2, Math.max(w / 2, next.door.offset)) };
+  }
+  return next;
 }
 
 /** Corners plus points along each edge, so items straddling an alcove's mouth are checked properly. */
@@ -149,29 +235,35 @@ function edgeSamples(poly: Vec2[], perEdge = 4): Vec2[] {
 }
 
 /** Nearest wall and the offset along it for a plan point (used when dragging openings). */
-export function nearestWall(room: Room, p: Vec2): { wall: WallSide; offset: number } {
+export function nearestWall(room: Box, p: Vec2): { wall: WallSide; offset: number } {
+  const x0 = room.x ?? 0;
+  const z0 = room.z ?? 0;
   const d: [WallSide, number][] = [
-    ["north", Math.abs(p.z)],
-    ["south", Math.abs(room.length - p.z)],
-    ["west", Math.abs(p.x)],
-    ["east", Math.abs(room.width - p.x)],
+    ["north", Math.abs(p.z - z0)],
+    ["south", Math.abs(z0 + room.length - p.z)],
+    ["west", Math.abs(p.x - x0)],
+    ["east", Math.abs(x0 + room.width - p.x)],
   ];
   d.sort((a, b) => a[1] - b[1]);
   const wall = d[0][0];
-  const offset = wall === "north" || wall === "south" ? p.x : p.z;
+  const offset = wall === "north" || wall === "south" ? p.x - x0 : p.z - z0;
   return { wall, offset };
 }
 
-/** Plan-space quadrilateral swept by a door leaf, used for clearance warnings. */
-export function doorSwingArea(room: Room, o: Opening): Vec2[] {
-  const f = wallFrame(room, o.wall);
+/**
+ * Plan-space quadrilateral swept by a door leaf, used for clearance warnings.
+ * A door that swings out sweeps the far side of its wall (`thickness` thick).
+ */
+export function doorSwingArea(f: WallFrame, o: { offset: number; width: number; swing?: DoorSwing }, thickness = 12): Vec2[] {
   const a = o.offset - o.width / 2;
   const b = o.offset + o.width / 2;
+  const v0 = o.swing === "out" ? -thickness : 0;
+  const v1 = o.swing === "out" ? -thickness - o.width : o.width;
   const at = (u: number, v: number) => ({
     x: f.start.x + f.dir.x * u + f.inward.x * v,
     z: f.start.z + f.dir.z * u + f.inward.z * v,
   });
-  return [at(a, 0), at(b, 0), at(b, o.width), at(a, o.width)];
+  return [at(a, v0), at(b, v0), at(b, v1), at(a, v1)];
 }
 
 export interface SnapOptions {
@@ -203,6 +295,12 @@ export function snapPosition(
     const t = opts.threshold ?? 12;
     const xTargets = [0, room.width];
     const zTargets = [0, room.length];
+    // Space walls count too, inside and out (partitions are 12 cm thick like the main walls).
+    for (const sp of room.spaces) {
+      const r = spaceRect(sp);
+      if (pos.z + hz > r.minZ - t && pos.z - hz < r.maxZ + t) xTargets.push(r.minX, r.maxX, r.minX - 12, r.maxX + 12);
+      if (pos.x + hx > r.minX - t && pos.x - hx < r.maxX + t) zTargets.push(r.minZ, r.maxZ, r.minZ - 12, r.maxZ + 12);
+    }
     // Alcove walls count as walls when the item is near the alcove.
     for (const a of room.alcoves) {
       const r = alcoveRect(room, a);
@@ -309,9 +407,13 @@ export function computeWarnings(room: Room, items: FurnitureItem[], openings: Op
     }
   }
 
-  for (const o of openings) {
-    if (o.kind !== "door") continue;
-    const swing = doorSwingArea(room, o);
+  // Main-room doors swinging out sweep outside the room, where there is no furniture.
+  const swings = [
+    ...openings.filter((o) => o.kind === "door" && o.swing !== "out").map((o) => ({ area: doorSwingArea(wallFrame(room, o.wall), o), height: o.height })),
+    ...room.spaces.flatMap((sp) => (sp.door ? [{ area: doorSwingArea(wallFrame(sp, sp.door.wall), sp.door), height: 205 }] : [])),
+  ];
+  for (const o of swings) {
+    const swing = o.area;
     for (const it of items) {
       if (isFloorCovering(it.type) || (elev.get(it.id) ?? 0) >= o.height) continue;
       if (polygonsOverlap(swing, prints.get(it.id)!)) {
