@@ -1,0 +1,81 @@
+// Scene model. All lengths are centimetres, all angles degrees.
+//
+// Plan coordinates: origin at the north-west inner corner of the room,
+// +x runs east (along the room width), +z runs south (along the room length).
+// Rotation is clockwise when viewed from above. A furniture item's local
+// "front" faces +z at rotation 0, so its back sits against the north wall.
+
+export type Unit = "cm" | "imperial";
+
+export type WallSide = "north" | "east" | "south" | "west";
+
+export type FloorMaterial = "oak" | "walnut" | "ash" | "tile" | "carpet" | "concrete";
+
+export type FurnitureType =
+  | "bed"
+  | "wardrobe"
+  | "desk"
+  | "chair"
+  | "armchair"
+  | "nightstand"
+  | "dresser"
+  | "bookcase"
+  | "rug"
+  | "rug-round"
+  | "floor-lamp"
+  | "table-lamp"
+  | "plant";
+
+export interface Room {
+  name: string;
+  width: number; // x extent
+  length: number; // z extent
+  height: number; // ceiling height
+  wallColor: string;
+  floor: FloorMaterial;
+}
+
+export interface Opening {
+  id: string;
+  kind: "door" | "window";
+  wall: WallSide;
+  /** Distance from the wall's start corner to the opening's centre. */
+  offset: number;
+  width: number;
+  height: number;
+  /** Height of the bottom edge above the floor (0 for doors). */
+  sill: number;
+  /** Doors only: which end of the opening the hinge sits at. */
+  hinge: "start" | "end";
+}
+
+export interface FurnitureItem {
+  id: string;
+  type: FurnitureType;
+  /** Catalogue entry this item was created from. */
+  catalogId: string;
+  name: string;
+  x: number; // centre
+  z: number; // centre
+  rotation: number;
+  width: number;
+  depth: number;
+  height: number;
+  color: string;
+}
+
+export interface Scene {
+  version: 1;
+  room: Room;
+  openings: Opening[];
+  furniture: FurnitureItem[];
+}
+
+export type Selection =
+  | { kind: "furniture"; id: string }
+  | { kind: "opening"; id: string }
+  | null;
+
+export type ViewMode = "2d" | "3d";
+
+export type WallVisibility = "auto" | "all" | "cutaway";
