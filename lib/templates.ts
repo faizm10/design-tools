@@ -27,7 +27,7 @@ export function exampleScene(): Scene {
   n = 0;
   return {
     version: 1,
-    room: { name: "Main bedroom", width: 360, length: 420, height: 250, wallColor: "#ece8e1", floor: "oak", alcoves: [] },
+    room: { name: "Main bedroom", width: 360, length: 420, height: 250, wallColor: "#ece8e1", floor: "oak", alcoves: [], spaces: [] },
     openings: [
       { id: "ex-door", kind: "door", wall: "south", offset: 300, width: 80, height: 205, sill: 0, hinge: "end" },
       { id: "ex-window", kind: "window", wall: "east", offset: 250, width: 120, height: 120, sill: 90, hinge: "start" },
@@ -67,6 +67,7 @@ export function sketchBedroomScene(): Scene {
       wallColor: "#ece8e1",
       floor: "oak",
       alcoves: [{ id: "sk-alcove", wall: "south", offset: 290, width: 174, depth: 63, window: { width: 73, height: 120, sill: 90 } }],
+      spaces: [],
     },
     openings: [
       { id: "sk-bathroom", kind: "door", wall: "north", offset: 60, width: 70, height: 205, sill: 0, hinge: "start" },
@@ -89,7 +90,7 @@ export function sketchBedroomScene(): Scene {
 export function emptyScene(): Scene {
   return {
     version: 1,
-    room: { name: "New bedroom", width: 350, length: 400, height: 250, wallColor: "#f6f4ef", floor: "ash", alcoves: [] },
+    room: { name: "New bedroom", width: 350, length: 400, height: 250, wallColor: "#f6f4ef", floor: "ash", alcoves: [], spaces: [] },
     openings: [{ id: "em-door", kind: "door", wall: "south", offset: 290, width: 80, height: 205, sill: 0, hinge: "end" }],
     furniture: [],
   };
