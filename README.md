@@ -27,6 +27,17 @@ Planning never requires an account: everything works anonymously and autosaves i
 
 Identity is [Neon Auth](https://neon.com/docs/auth/overview) (managed Better Auth): email and password, plus Google through Neon's shared development keys. Plans live in a `plans` table in the same Neon Postgres database, storing the scene as JSONB. Every `/api/plans` route checks the session and filters by the signed-in user's id, so one account can never read or change another's plans.
 
+## Collaborating
+
+Signed in with a saved plan, press **Share** to create an invite link. Anyone who opens it and signs in becomes an editor; the owner can remove people or reset the link from the same dialog, and collaborators can leave. Plans shared with you appear in **My plans**.
+
+While a shared plan is open, everyone edits it live:
+
+- **Edits sync as you make them.** Each change is sent with the version it was based on. If someone else saved in between, the two are merged per item (furniture, doors and windows, alcoves, rooms, room settings), so people editing different things never overwrite each other; only edits to the very same item conflict, and the latest wins. Undo and redo only revert your own changes.
+- **Live cursors.** Everyone's pointer shows on the 2D plan, and as a pin on the floor in 3D, labelled with their name in their colour, along with an outline around whatever they've selected. Avatars of the people here sit next to the Share button, whose dot shows the sync status.
+
+This uses [Neon Realtime](https://neon.com/docs/realtime/overview) (beta): the browser subscribes to live SQL queries over the `plans` and `plan_presence` tables that the server authorizes and seals, and access is part of each query, so removing someone cuts them off at once. Writes go through the normal API routes. Without Realtime configured (`NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` unset), sharing still works but collaborators see each other's changes only after reopening the plan.
+
 ### Set up Neon locally
 
 1. Install the CLI and sign in: `npm i -g neon`, then `neon login`.
@@ -37,6 +48,7 @@ Identity is [Neon Auth](https://neon.com/docs/auth/overview) (managed Better Aut
    ```
 3. Add a cookie secret: `echo "NEON_AUTH_COOKIE_SECRET=$(openssl rand -base64 32)" >> .env.local`
 4. Create the tables: `npm run db:migrate`
+5. Optional, for live collaboration: `neon deploy` enables Realtime from `neon.ts`, then `neon env pull --service postgres --service realtime` adds `NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` to `.env.local`.
 
 `.env.example` lists every variable. Before deploying, set the same variables on your host, add the production origin as a trusted domain (`neon neon-auth domain add https://your-app.example`), and replace the shared Google keys and shared email sender with your own (see Neon's [production checklist](https://neon.com/docs/auth/production-checklist)).
 
@@ -73,15 +85,20 @@ lib/
   textures.ts     Procedural floor textures (canvas), shared by both views
   scene.ts        Scene validation, shared by the browser and the API
   cloud.ts        Client-side save/open/delete state for signed-in users
+  collab/         Live sync, three-way scene merge and presence (cursors, selections)
+  realtime.ts     Neon Realtime live queries on plans and presence (server only)
   auth/           Neon Auth server instance and browser client
   db.ts           Neon Postgres client (server only)
 app/api/
   auth/[...path]  Neon Auth proxy
-  plans/          List, create, read, update and delete saved plans
+  plans/          List, create, read, update and delete saved plans; [id]/live, presence,
+                  invite and members for collaboration
+  invites/        Accept an invite link
 db/migrations/    SQL migrations, applied by `npm run db:migrate`
 components/
   planner/        App shell: toolbar, catalogue, properties panel, overlays, shortcuts
   account/        Save button, sign-in dialog, account menu and My plans
+  collab/         Live session, share dialog, presence avatars, remote cursors
   plan2d/         SVG plan view and furniture plan symbols (also the catalogue thumbnails)
   scene3d/        R3F scene, procedural furniture models, walls with real openings
 ```

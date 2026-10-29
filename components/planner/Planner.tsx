@@ -13,6 +13,8 @@ import { Catalog, DRAG_MIME } from "./Catalog";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { SceneOverlay } from "./SceneOverlay";
 import PlanView from "../plan2d/PlanView";
+import { CollabRoot } from "../collab/CollabSession";
+import { presenceBridge } from "@/lib/collab/session";
 
 const Scene3D = dynamic(() => import("../scene3d/Scene3D"), {
   ssr: false,
@@ -84,6 +86,9 @@ export default function Planner() {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
           }}
           onDrop={onDrop}
+          // Share where this pointer is on the floor with collaborators (a no-op when not collaborating).
+          onPointerMove={(e) => presenceBridge.setCursor?.(viewBridge.screenToFloor?.(e.clientX, e.clientY) ?? null)}
+          onPointerLeave={() => presenceBridge.setCursor?.(null)}
         >
           <div key={view} className="animate-fade-in absolute inset-0">
             {view === "3d" ? <Scene3D /> : <PlanView />}
@@ -109,6 +114,7 @@ export default function Planner() {
         </aside>
       </div>
       <Toaster />
+      <CollabRoot />
     </div>
   );
 }

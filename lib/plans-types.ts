@@ -6,4 +6,9 @@ export interface PlanSummary {
   width: number;
   length: number;
   items: number;
+  /** False for plans someone else shared with you. */
+  owned: boolean;
+  ownerName: string;
+  /** People the plan is shared with, not counting the owner. */
+  members: number;
 }

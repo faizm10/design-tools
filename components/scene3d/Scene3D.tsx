@@ -13,6 +13,8 @@ import type { FurnitureItem, Opening, Room, Space } from "@/lib/types";
 import { FurnitureModel } from "./models";
 import { Floor, Walls, useHiddenWalls } from "./Room3D";
 import { useWarnings } from "../planner/useWarnings";
+import { useCollab } from "@/lib/collab/session";
+import { CursorArrow } from "../collab/RemoteCursors";
 
 const ACCENT = "#2f6fed";
 const WARN = "#dc4a3d";
@@ -298,6 +300,7 @@ function SceneContents() {
           <Footprint key={`fp-${it.id}`} it={it} room={room} color={byItem.has(it.id) ? WARN : ACCENT} />
         ) : null,
       )}
+      <PeerMarkers room={room} furniture={furniture} />
       {selected && showDims && (
         <Html
           position={toWorld(room, selected).setY((selected.height + (elevations.get(selected.id) ?? 0)) / 100 + 0.12)}
@@ -353,6 +356,33 @@ const Furniture = memo(function Furniture({
     </group>
   );
 });
+
+/** Collaborators' cursors as labelled pins on the floor, and their selections outlined in their colour. */
+function PeerMarkers({ room, furniture }: { room: Room; furniture: FurnitureItem[] }) {
+  const peers = useCollab((s) => s.peers);
+  return (
+    <>
+      {peers.map((p) => {
+        const sel = p.selection?.kind === "furniture" ? furniture.find((f) => f.id === (p.selection as { id: string }).id) : undefined;
+        return (
+          <group key={p.session_id}>
+            {sel && <Footprint it={sel} room={room} color={p.color} />}
+            {p.cursor_x !== null && p.cursor_z !== null && (
+              <Html position={toWorld(room, { x: p.cursor_x, z: p.cursor_z })} zIndexRange={[15, 0]} style={{ pointerEvents: "none" }}>
+                <div className="relative">
+                  <CursorArrow color={p.color} />
+                  <span className="absolute top-4 left-3.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-white shadow-md" style={{ backgroundColor: p.color }}>
+                    {p.name}
+                  </span>
+                </div>
+              </Html>
+            )}
+          </group>
+        );
+      })}
+    </>
+  );
+}
 
 /** Outline on the floor showing selection or a warning, matching the 2D footprint. */
 function Footprint({ it, room, color }: { it: FurnitureItem; room: Room; color: string }) {

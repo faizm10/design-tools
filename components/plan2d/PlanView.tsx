@@ -29,6 +29,7 @@ import { isFloorCovering } from "@/lib/catalog";
 import type { Alcove, DoorSwing, FloorMaterial, FurnitureItem, Opening, Room, Scene, Selection, Space, Unit, WallSide } from "@/lib/types";
 import { PlanSymbol } from "./PlanSymbol";
 import { useWarnings } from "../planner/useWarnings";
+import { PeerSelections, PlanCursors } from "../collab/RemoteCursors";
 
 const WALL = 12;
 const ACCENT = "#2f6fed";
@@ -576,6 +577,8 @@ export default function PlanView() {
               );
             })}
 
+            <PeerSelections furniture={furniture} spaces={room.spaces} px={px} />
+
             {showDims && <RoomDimensions room={room} unit={unit} px={px} />}
             {showDims && room.alcoves.map((a) => <AlcoveDimensions key={a.id} room={room} a={a} unit={unit} px={px} />)}
             {selectedItem && showDims && <ItemDimensions it={selectedItem} room={room} unit={unit} px={px} />}
@@ -599,6 +602,7 @@ export default function PlanView() {
           </g>
         )}
       </svg>
+      <PlanCursors cam={cam} />
     </div>
   );
 }

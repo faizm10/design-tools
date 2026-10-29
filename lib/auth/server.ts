@@ -23,6 +23,12 @@ export function getAuth(): NeonAuth {
 
 /** The signed-in user's id, or null. API routes use this before touching any plan. */
 export async function currentUserId(): Promise<string | null> {
+  return (await currentUser())?.id ?? null;
+}
+
+/** The signed-in user, or null. */
+export async function currentUser(): Promise<{ id: string; name: string; email: string } | null> {
   const { data: session } = await getAuth().getSession();
-  return session?.user?.id ?? null;
+  const u = session?.user;
+  return u ? { id: u.id, name: u.name || u.email.split("@")[0], email: u.email } : null;
 }
